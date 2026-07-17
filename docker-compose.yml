@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: protocols
+      POSTGRES_USER: protocols
+      POSTGRES_PASSWORD: protocols
+    ports: ["5432:5432"]
+  web:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://protocols:protocols@db:5432/protocols
+      AI_ENABLED: "false"
+    ports: ["8000:8000"]
+    depends_on: [db]
