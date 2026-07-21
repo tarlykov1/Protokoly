@@ -20,3 +20,9 @@ run:
 
 check:
 	./scripts/check.sh
+
+demo:
+	alembic upgrade head
+	python -m app.cli.seed_demo
+	python -m app.cli.generate_demo_docx
+	@echo "Demo URL: http://localhost:8000"

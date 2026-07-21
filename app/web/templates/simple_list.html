@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h1>{{ title }}</h1><ul class="list-group">{% for item in items %}<li class="list-group-item">{{ item }}</li>{% else %}<li class="list-group-item">Пока нет данных.</li>{% endfor %}</ul>{% endblock %}
