@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Protocol Management System"
     database_url: str = "sqlite:///./protocols.db"
+    demo_mode: bool = False
     ai_enabled: bool = False
     ai_provider: str = "rule_based"
     ai_allow_external: bool = False

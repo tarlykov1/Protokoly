@@ -1,0 +1,44 @@
+# Demo MVP
+
+Демоверсия показывает полный автономный сценарий управления протоколом без подключения к Bitrix24 и без внешних API.
+
+## Сценарий
+1. Открыть приложение.
+2. Перейти в «Демонстрация» и выбрать демонстрационный проект.
+3. Скачать или загрузить DOCX.
+4. Проверить распознанные разделы и поручения.
+5. Исправить формулировки, сроки и исполнителей.
+6. Запустить массовую проверку и локальную RuleBased AI-оценку.
+7. Сформировать план задач.
+8. Создать тестовые задачи через FakeTaskGateway.
+9. Открыть результат и журнал тестовых публикаций.
+10. Повторить только неуспешные операции или сбросить demo-данные.
+
+## Docker
+```bash
+docker compose up --build
+python -m app.cli.seed_demo
+python -m app.cli.generate_demo_docx
+```
+
+## Быстрый запуск
+```bash
+make demo
+```
+Команда применяет миграции, создаёт demo-данные, генерирует DOCX и выводит URL.
+
+## SQLite
+```bash
+DATABASE_URL=sqlite:///./demo.db DEMO_MODE=true alembic upgrade head
+DATABASE_URL=sqlite:///./demo.db DEMO_MODE=true python -m app.cli.seed_demo
+DATABASE_URL=sqlite:///./demo.db DEMO_MODE=true python -m app.cli.generate_demo_docx
+```
+
+## Данные
+`python -m app.cli.seed_demo` идемпотентно создаёт демонстрационный проект, сотрудников, списки, протокол, разделы и поручения. `python -m app.cli.reset_demo` удаляет только записи с demo-ключами и не затрагивает пользовательские данные.
+
+## Ограничения
+Реальный BitrixTaskGateway, OAuth, webhook и REST-вызовы не реализованы. FakeTaskGateway создаёт стабильные simulated_external_id, сохраняет payload и возвращает `reused` при повторном external_key.
+
+## Конфиденциальность
+В DEMO_MODE данные не отправляются во внешние системы. AI-оценка выполняется локальным RuleBased provider.

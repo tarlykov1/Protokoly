@@ -225,6 +225,48 @@ class TaskAssessment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PublicationRun(Base):
+    __tablename__ = "publication_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"))
+    gateway_type: Mapped[str] = mapped_column(String(64), default="fake")
+    mode: Mapped[str] = mapped_column(String(32), default="demo")
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    total_items: Mapped[int] = mapped_column(Integer(), default=0)
+    successful_items: Mapped[int] = mapped_column(Integer(), default=0)
+    failed_items: Mapped[int] = mapped_column(Integer(), default=0)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    error_summary: Mapped[str | None] = mapped_column(Text())
+    protocol: Mapped[Protocol] = relationship()
+    items: Mapped[list["PublicationItem"]] = relationship(back_populates="publication_run")
+
+
+class PublicationItem(Base):
+    __tablename__ = "publication_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    publication_run_id: Mapped[int] = mapped_column(
+        ForeignKey("publication_runs.id", ondelete="CASCADE")
+    )
+    protocol_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="SET NULL")
+    )
+    assignment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("protocol_task_assignments.id", ondelete="SET NULL")
+    )
+    external_key: Mapped[str] = mapped_column(String(255), index=True)
+    parent_external_key: Mapped[str | None] = mapped_column(String(255))
+    simulated_external_id: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    request_payload: Mapped[dict | None] = mapped_column(JSON())
+    response_payload: Mapped[dict | None] = mapped_column(JSON())
+    error_message: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    publication_run: Mapped[PublicationRun] = relationship(back_populates="items")
+    protocol_task: Mapped[ProtocolTask | None] = relationship()
+
+
 class ImportSession(Base):
     __tablename__ = "import_sessions"
     id: Mapped[int] = mapped_column(primary_key=True)
