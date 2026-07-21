@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: protocols
+      POSTGRES_USER: protocols
+      POSTGRES_PASSWORD: protocols
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U protocols -d protocols"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://protocols:protocols@db:5432/protocols
+      ALLOWED_HOSTS: demo.example.ru,localhost,127.0.0.1
+      DEMO_MODE: "true"
+      AI_ENABLED: "false"
+    ports: ["8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
