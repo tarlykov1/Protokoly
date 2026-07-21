@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     ai_allow_external: bool = False
     ai_model: str = ""
     ai_api_key: str = ""
+    import_session_ttl_hours: int = 24
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

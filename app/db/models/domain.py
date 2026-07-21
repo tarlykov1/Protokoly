@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -18,7 +19,9 @@ from app.db.base import Base
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Project(TimestampMixin, Base):
@@ -96,7 +99,9 @@ class EmployeeListMember(Base):
     __tablename__ = "employee_list_members"
     __table_args__ = (UniqueConstraint("employee_list_id", "employee_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    employee_list_id: Mapped[int] = mapped_column(ForeignKey("employee_lists.id", ondelete="CASCADE"))
+    employee_list_id: Mapped[int] = mapped_column(
+        ForeignKey("employee_lists.id", ondelete="CASCADE")
+    )
     employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
     sort_order: Mapped[int] = mapped_column(Integer(), default=0)
     employee_list: Mapped[EmployeeList] = relationship(back_populates="members")
@@ -152,14 +157,18 @@ class ProtocolTask(TimestampMixin, Base):
     source_paragraph: Mapped[int | None] = mapped_column(Integer())
     source_table: Mapped[int | None] = mapped_column(Integer())
     protocol: Mapped[Protocol] = relationship(back_populates="tasks")
-    assignments: Mapped[list["ProtocolTaskAssignment"]] = relationship(back_populates="protocol_task")
+    assignments: Mapped[list["ProtocolTaskAssignment"]] = relationship(
+        back_populates="protocol_task"
+    )
     bitrix_links: Mapped[list["BitrixTaskLink"]] = relationship(back_populates="protocol_task")
 
 
 class ProtocolTaskAssignment(Base):
     __tablename__ = "protocol_task_assignments"
     id: Mapped[int] = mapped_column(primary_key=True)
-    protocol_task_id: Mapped[int] = mapped_column(ForeignKey("protocol_tasks.id", ondelete="CASCADE"))
+    protocol_task_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="CASCADE")
+    )
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     source_employee_list_id: Mapped[int | None] = mapped_column(ForeignKey("employee_lists.id"))
     individual_title: Mapped[str | None] = mapped_column(String(500))
@@ -176,7 +185,9 @@ class BitrixTaskLink(Base):
     __tablename__ = "bitrix_task_links"
     __table_args__ = (UniqueConstraint("external_key"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    protocol_task_id: Mapped[int] = mapped_column(ForeignKey("protocol_tasks.id", ondelete="CASCADE"))
+    protocol_task_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="CASCADE")
+    )
     assignment_id: Mapped[int | None] = mapped_column(ForeignKey("protocol_task_assignments.id"))
     bitrix_task_id: Mapped[int | None] = mapped_column(Integer())
     parent_bitrix_task_id: Mapped[int | None] = mapped_column(Integer())
@@ -191,7 +202,9 @@ class BitrixTaskLink(Base):
 class TaskAssessment(Base):
     __tablename__ = "task_assessments"
     id: Mapped[int] = mapped_column(primary_key=True)
-    protocol_task_id: Mapped[int] = mapped_column(ForeignKey("protocol_tasks.id", ondelete="CASCADE"))
+    protocol_task_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="CASCADE")
+    )
     provider: Mapped[str] = mapped_column(String(64))
     model: Mapped[str | None] = mapped_column(String(128))
     prompt_version: Mapped[str] = mapped_column(String(64))
@@ -210,3 +223,26 @@ class TaskAssessment(Base):
     raw_response_json: Mapped[str | None] = mapped_column(Text())
     created_by: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ImportSession(Base):
+    __tablename__ = "import_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    original_filename: Mapped[str] = mapped_column(String(255))
+    stored_filename: Mapped[str] = mapped_column(String(255))
+    file_path: Mapped[str] = mapped_column(String(500))
+    file_size: Mapped[int] = mapped_column(Integer())
+    checksum: Mapped[str] = mapped_column(String(64), index=True)
+    parser_type: Mapped[str] = mapped_column(String(64), default="universal")
+    status: Mapped[str] = mapped_column(String(32), default="uploaded")
+    parsed_payload: Mapped[dict | None] = mapped_column(JSON())
+    warnings_payload: Mapped[list | None] = mapped_column(JSON())
+    errors_payload: Mapped[list | None] = mapped_column(JSON())
+    parse_history: Mapped[list | None] = mapped_column(JSON())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    protocol_id: Mapped[int | None] = mapped_column(ForeignKey("protocols.id"))
+    project: Mapped[Project] = relationship()
+    protocol: Mapped[Protocol | None] = relationship()
