@@ -1,9 +1,21 @@
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from app.core.config import get_settings
+from app.core.security import (
+    RequestIDLoggingMiddleware,
+    SecurityHeadersMiddleware,
+    SimpleSessionMiddleware,
+    csrf_exception_handler,
+    csrf_token,
+)
 from app.db.models.domain import ImportSession, Project, Protocol, ProtocolTask
 from app.db.session import get_db
 from app.services.imports.service import (
@@ -13,13 +25,53 @@ from app.services.imports.service import (
     update_session_payload,
 )
 
+settings = get_settings()
 app = FastAPI(title="Protocol Management System")
-templates = Jinja2Templates(directory="app/web/templates")
+app.add_middleware(RequestIDLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.forwarded_allow_ips)
+app.add_middleware(
+    SimpleSessionMiddleware,
+    secret_key=settings.secret_key,
+    max_age=settings.session_max_age_seconds,
+    same_site="lax",
+    https_only=settings.secure_cookies,
+)
+app.add_exception_handler(HTTPException, csrf_exception_handler)
+templates = Jinja2Templates(
+    directory="app/web/templates",
+    context_processors=[lambda request: {"csrf_token": csrf_token(request), "public_base_url": settings.public_base_url, "app_version": settings.app_version}],
+)
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/version")
+def version():
+    return {"version": settings.app_version, "commit": settings.git_commit, "build_date": settings.build_date}
+
+
+@app.get("/ready")
+def ready(db: Session = Depends(get_db)):
+    checks = {"database": "unknown", "migrations": "unknown"}
+    status_code = 200
+    try:
+        db.execute(text("select 1"))
+        checks["database"] = "ok"
+        current = db.execute(text("select version_num from alembic_version")).scalar_one_or_none()
+        head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+        checks["migrations"] = "ok" if current == head else f"expected {head}, got {current}"
+        if current != head:
+            status_code = 503
+    except Exception as exc:
+        checks["database"] = "error"
+        checks["error"] = exc.__class__.__name__
+        status_code = 503
+    return JSONResponse({"status": "ready" if status_code == 200 else "not_ready", "checks": checks}, status_code=status_code)
 
 
 @app.get("/")
@@ -195,7 +247,6 @@ from fastapi.responses import FileResponse
 from app.cli.generate_demo_docx import generate as generate_demo_docx
 from app.cli.reset_demo import reset as reset_demo_data
 from app.cli.seed_demo import seed as seed_demo_data
-from app.core.config import get_settings
 from app.db.models.domain import (
     Employee,
     EmployeeList,

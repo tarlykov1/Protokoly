@@ -101,3 +101,33 @@ jobs:
           if [ -f /tmp/protocol-management.pid ]; then
             kill "$(cat /tmp/protocol-management.pid)" || true
           fi
+
+
+  deployment-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare demo env
+        run: |
+          cp .env.example .env
+          sed -i 's/change-me-generate-with-openssl-rand-hex-32/ci-secret-key-for-demo-deployment-tests/' .env
+          sed -i 's/https:\/\/demo.example.ru/http:\/\/localhost/' .env
+          sed -i 's/demo.example.ru,localhost,127.0.0.1/localhost,127.0.0.1,testserver/' .env
+      - name: Validate compose
+        run: docker compose -f docker-compose.demo.yml --env-file .env config
+      - name: Build runtime image
+        run: docker compose -f docker-compose.demo.yml --env-file .env build app
+      - name: Start database and migrate
+        run: |
+          docker compose -f docker-compose.demo.yml --env-file .env up -d db
+          docker compose -f docker-compose.demo.yml --env-file .env run --rm app alembic upgrade head
+      - name: Seed demo
+        run: docker compose -f docker-compose.demo.yml --env-file .env run --rm app python -m app.cli.seed_demo
+      - name: Start app and smoke test
+        run: |
+          docker compose -f docker-compose.demo.yml --env-file .env up -d app nginx
+          BASE_URL=http://localhost ./scripts/smoke-test.sh
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.demo.yml --env-file .env down -v

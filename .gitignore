@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 *.db
 *.sqlite
 __pycache__/
@@ -8,5 +10,8 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+backups/
+certs/
 uploads/
+data/
 logs/

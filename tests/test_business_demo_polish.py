@@ -35,12 +35,14 @@ def test_demo_business_pages_and_empty_states(monkeypatch):
 
 def test_demo_seed_reset_docx_over_http(monkeypatch):
     client = client_with_demo(monkeypatch)
-    response = client.post("/demo/seed", follow_redirects=False)
+    token = client.get("/demo").text.split('name="csrf_token" value="')[1].split('"')[0]
+    response = client.post("/demo/seed", data={"csrf_token": token}, follow_redirects=False)
     assert response.status_code == 303
     assert client.get("/demo/docx").status_code == 200
     with SessionLocal() as db:
         assert db.scalar(select(Protocol).where(Protocol.number == "DEMO-001")) is not None
-    response = client.post("/demo/reset", data={"confirm": "yes"}, follow_redirects=False)
+    token = client.get("/demo").text.split('name="csrf_token" value="')[1].split('"')[0]
+    response = client.post("/demo/reset", data={"confirm": "yes", "csrf_token": token}, follow_redirects=False)
     assert response.status_code == 303
     with SessionLocal() as db:
         assert db.scalar(select(Protocol).where(Protocol.number == "DEMO-001")) is None
@@ -48,8 +50,9 @@ def test_demo_seed_reset_docx_over_http(monkeypatch):
 
 def test_demo_actions_disabled_when_demo_mode_false(monkeypatch):
     client = client_with_demo(monkeypatch, enabled=False)
-    assert client.post("/demo/seed").status_code == 404
-    assert client.post("/demo/reset", data={"confirm": "yes"}).status_code == 404
+    token = client.get("/demo").text.split('name="csrf_token" value="')[1].split('"')[0]
+    assert client.post("/demo/seed", data={"csrf_token": token}).status_code == 404
+    assert client.post("/demo/reset", data={"confirm": "yes", "csrf_token": token}).status_code == 404
     assert client.get("/demo/docx").status_code == 404
 
 
