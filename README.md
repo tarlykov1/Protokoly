@@ -72,3 +72,28 @@ ruff check .
 6. После зелёного CI pull request можно переводить из Draft в Ready for review.
 7. После проверки pull request сливается.
 8. Следующий функциональный этап начинается только после слияния предыдущего либо в отдельной согласованной ветке.
+
+## DOCX import MVP
+
+The application supports a staged DOCX import workflow for real protocol drafts without creating Bitrix24 tasks.
+
+1. Open `/protocols/import`, choose a project, upload a `.docx`, and optionally select a parser.
+2. `POST /protocols/import/preview` stores the file under `var/imports` (outside `static`), validates extension, MIME type, ZIP signature, size, safe generated filename, and SHA-256 checksum, then creates an `ImportSession`.
+3. `/protocols/import/{session_id}/preview` shows parser confidence, protocol metadata, sections, tasks, assignees, deadlines, warnings, errors, duplicate hints, and editable JSON payload.
+4. `POST /protocols/import/{session_id}/update` saves manual corrections in `ImportSession.parsed_payload`; the original DOCX is not changed.
+5. `POST /protocols/import/{session_id}/reparse` reruns parsing with explicit confirmation and keeps prior payload in parse history.
+6. `POST /protocols/import/{session_id}/confirm` creates `Protocol`, `ProtocolSection`, `ProtocolTask`, and assignment records, stores the source file path, and marks the session confirmed.
+7. `POST /protocols/import/{session_id}/cancel` cancels the session without creating core protocol entities.
+8. `/protocols/imports` lists import sessions with filters by project, status, and parser type.
+
+Supported MVP patterns include regular paragraphs, Word headings, uppercase section names, numbered and bulleted-like tasks, DOCX tables with `Поручение / Ответственный / Срок`, absolute Russian dates, relative/periodic deadlines, and raw assignee strings resolved against the local employee directory where possible.
+
+Parsers are registered in `ParserRegistry`: `UniversalProtocolParser`, `MemoParser`, `CeoProtocolParser`, and `DeputyCeoProtocolParser`. To add a parser, implement the shared `ProtocolParser` interface (`supports`, `confidence`, `parse`) and register it in `ParserRegistry`.
+
+Temporary import sessions expire after `IMPORT_SESSION_TTL_HOURS` (default `24`). Run cleanup with:
+
+```bash
+python -m app.cli.cleanup_imports
+```
+
+MVP limitations: Bitrix24 task creation is intentionally disabled; preview editing uses JSON payload editing rather than a full spreadsheet UI; date inference avoids inventing concrete dates for relative deadlines.
