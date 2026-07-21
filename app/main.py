@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -193,6 +193,8 @@ def import_sessions(
 from fastapi.responses import FileResponse
 
 from app.cli.generate_demo_docx import generate as generate_demo_docx
+from app.cli.reset_demo import reset as reset_demo_data
+from app.cli.seed_demo import seed as seed_demo_data
 from app.core.config import get_settings
 from app.db.models.domain import (
     Employee,
@@ -221,21 +223,81 @@ def demo_docx():
     )
 
 
-@app.get("/demo")
-def demo_wizard(request: Request, db: Session = Depends(get_db)):
-    demo_project = db.scalar(select(Project).where(Project.code == "DEMO-MVP"))
+def demo_context(db: Session):
+    project = db.scalar(select(Project).where(Project.code == "DEMO-MVP"))
     protocol = (
         db.scalar(
             select(Protocol)
-            .where(Protocol.project_id == demo_project.id)
+            .where(Protocol.project_id == project.id)
             .order_by(Protocol.created_at.desc())
         )
-        if demo_project
+        if project
         else None
     )
+    tasks = protocol.tasks if protocol else []
+    ready = sum(1 for task in tasks if task.assignments and task.deadline and task.title)
+    progress = int(100 * ready / max(len(tasks), 1))
+    return {"project": project, "protocol": protocol, "tasks": tasks, "progress": progress}
+
+
+def require_demo_mode():
+    if not get_settings().demo_mode:
+        raise HTTPException(status_code=404, detail="Demo actions are disabled")
+
+
+@app.get("/demo")
+def demo_wizard(request: Request, db: Session = Depends(get_db)):
+    ctx = demo_context(db)
+    return templates.TemplateResponse(request, "demo.html", ctx | {"message": request.query_params.get("message")})
+
+
+@app.post("/demo/seed")
+def demo_seed():
+    require_demo_mode()
+    seed_demo_data()
+    return RedirectResponse("/demo?message=Демонстрационные данные подготовлены", status_code=303)
+
+
+@app.post("/demo/reset")
+def demo_reset(confirm: str = Form("")):
+    require_demo_mode()
+    if confirm != "yes":
+        return RedirectResponse("/demo?message=Для сброса требуется подтверждение", status_code=303)
+    reset_demo_data()
+    return RedirectResponse("/demo?message=Демонстрационные данные сброшены", status_code=303)
+
+
+@app.get("/demo/docx")
+def demo_docx_new():
+    require_demo_mode()
+    return demo_docx()
+
+
+@app.get("/demo/guided")
+def demo_guided(request: Request, db: Session = Depends(get_db), step: int = 1):
+    ctx = demo_context(db)
+    steps = [
+        ("Проект", "Показываем подготовленный контур без ручной настройки."),
+        ("Протокол", "Открываем пример протокола или загружаем DOCX."),
+        ("Распознавание", "Проверяем найденные поручения и предупреждения."),
+        ("Редактирование", "Уточняем исполнителей, сроки и критерии приемки."),
+        ("Проверка", "Запускаем контроль качества и локальную AI-оценку."),
+        ("План задач", "Смотрим будущую структуру задач и подзадач."),
+        ("Тестовая публикация", "Создаем только имитацию задач."),
+        ("Результат", "Подводим итог и фиксируем следующий этап."),
+    ]
+    step = min(max(step, 1), len(steps))
     return templates.TemplateResponse(
-        request, "demo.html", {"project": demo_project, "protocol": protocol}
+        request, "demo_guided.html", ctx | {"steps": steps, "step": step}
     )
+
+
+@app.get("/demo/complete")
+def demo_complete(request: Request, db: Session = Depends(get_db)):
+    ctx = demo_context(db)
+    runs = db.scalars(select(PublicationRun).order_by(PublicationRun.started_at.desc()).limit(1)).all()
+    created = sum(run.successful_items for run in runs) if runs else 0
+    return templates.TemplateResponse(request, "demo_complete.html", ctx | {"created": created})
 
 
 @app.get("/demo/dashboard")
@@ -250,7 +312,15 @@ def demo_dashboard(request: Request, db: Session = Depends(get_db)):
             "runs": db.scalars(
                 select(PublicationRun).order_by(PublicationRun.started_at.desc()).limit(5)
             ).all(),
+            "projects_count": db.scalar(select(func.count()).select_from(Project)) or 0,
+            "protocols_count": db.scalar(select(func.count()).select_from(Protocol)) or 0,
             "tasks_count": db.scalar(select(func.count()).select_from(ProtocolTask)) or 0,
+            "ready_count": db.scalar(select(func.count()).select_from(ProtocolTask).where(ProtocolTask.deadline.is_not(None))) or 0,
+            "review_count": db.scalar(select(func.count()).select_from(ProtocolTask).where(ProtocolTask.deadline.is_(None))) or 0,
+            "publication_count": db.scalar(select(func.count()).select_from(PublicationRun)) or 0,
+            "imports": db.scalars(select(ImportSession).order_by(ImportSession.created_at.desc()).limit(5)).all(),
+            "problem_tasks": db.scalars(select(ProtocolTask).where(ProtocolTask.deadline.is_(None)).limit(5)).all(),
+            **demo_context(db),
         },
     )
 
