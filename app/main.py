@@ -1,5 +1,6 @@
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -14,7 +15,44 @@ from app.services.imports.service import (
 )
 
 app = FastAPI(title="Protocol Management System")
+app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 templates = Jinja2Templates(directory="app/web/templates")
+
+
+def readiness_percent(protocol):
+    tasks = list(getattr(protocol, "tasks", []) or [])
+    if not tasks:
+        return 0
+    ready = 0
+    for task in tasks:
+        score = 0
+        score += 1 if task.title else 0
+        score += 1 if task.assignments else 0
+        score += 1 if task.deadline else 0
+        score += 1 if task.status in {"ready", "validated", "done"} or protocol.status == "ready" else 0
+        score += 1 if protocol.status not in {"validation_required", "error"} else 0
+        ready += score / 5
+    return int(100 * ready / len(tasks))
+
+
+def common_context(active_page=None, breadcrumb=None, **extra):
+    return {"active_page": active_page, "breadcrumb": breadcrumb, "app_version": "v0.6 UX"} | extra
+
+
+def task_attention(task, assessment=None):
+    reasons = []
+    if not task.title:
+        reasons.append("нет формулировки")
+    if not task.assignments:
+        reasons.append("без исполнителя")
+    if not task.deadline:
+        reasons.append("без срока")
+    if assessment and assessment.overall_score is not None and assessment.overall_score < 70:
+        reasons.append("низкая AI-оценка")
+    return reasons
+
+
+templates.env.globals["readiness_percent"] = readiness_percent
 
 
 @app.get("/health")
@@ -22,8 +60,18 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/ready")
+def ready():
+    return {"status": "ready"}
+
+
 @app.get("/")
-def home(request: Request, db: Session = Depends(get_db)):
+def home_redirect():
+    return RedirectResponse("/dashboard", status_code=307)
+
+
+@app.get("/dashboard")
+def dashboard(request: Request, db: Session = Depends(get_db)):
     draft_count = (
         db.scalar(select(func.count()).select_from(Protocol).where(Protocol.status == "draft")) or 0
     )
@@ -68,13 +116,13 @@ def projects(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "projects.html",
-        {"projects": db.scalars(select(Project).order_by(Project.name)).all()},
+        common_context("Проекты", "Проекты", projects=db.scalars(select(Project).order_by(Project.name)).all()),
     )
 
 
 @app.get("/projects/new")
 def new_project(request: Request):
-    return templates.TemplateResponse(request, "project_form.html")
+    return templates.TemplateResponse(request, "project_form.html", common_context("Проекты", "Новый проект"))
 
 
 @app.post("/projects")
@@ -90,12 +138,45 @@ def create_project(
 
 
 @app.get("/protocols")
-def protocols(request: Request, db: Session = Depends(get_db), status: str | None = None):
-    stmt = select(Protocol).order_by(Protocol.created_at.desc())
+def protocols(
+    request: Request,
+    db: Session = Depends(get_db),
+    status: str | None = None,
+    project_id: int | None = None,
+    q: str | None = None,
+    sort: str = "date",
+    readiness: str | None = None,
+):
+    stmt = select(Protocol)
     if status:
         stmt = stmt.where(Protocol.status == status)
+    if project_id:
+        stmt = stmt.where(Protocol.project_id == project_id)
+    if q:
+        stmt = stmt.where(Protocol.title.ilike(f"%{q}%"))
+    if sort == "title":
+        stmt = stmt.order_by(Protocol.title)
+    else:
+        stmt = stmt.order_by(Protocol.created_at.desc())
+    items = db.scalars(stmt).all()
+    if readiness == "ready":
+        items = [p for p in items if readiness_percent(p) >= 80]
+    elif readiness == "attention":
+        items = [p for p in items if readiness_percent(p) < 80]
     return templates.TemplateResponse(
-        request, "protocols.html", {"protocols": db.scalars(stmt).all(), "status": status}
+        request,
+        "protocols.html",
+        common_context(
+            "Протоколы",
+            "Протоколы",
+            protocols=items,
+            projects=db.scalars(select(Project).order_by(Project.name)).all(),
+            status=status,
+            project_id=project_id,
+            q=q or "",
+            sort=sort,
+            readiness=readiness,
+        ),
     )
 
 
@@ -104,7 +185,7 @@ def import_form(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "import_form.html",
-        {"projects": db.scalars(select(Project).order_by(Project.name)).all()},
+        common_context("Проекты", "Проекты", projects=db.scalars(select(Project).order_by(Project.name)).all()),
     )
 
 
@@ -127,11 +208,7 @@ def import_session_preview(
     return templates.TemplateResponse(
         request,
         "import_preview.html",
-        {
-            "session": session,
-            "payload": session.parsed_payload if session else {},
-            "filter": filter,
-        },
+        common_context("Импорт", "Предпросмотр", session=session, payload=session.parsed_payload if session else {}, filter=filter),
     )
 
 
@@ -186,7 +263,7 @@ def import_sessions(
     return templates.TemplateResponse(
         request,
         "import_sessions.html",
-        {"sessions": db.scalars(stmt).all(), "projects": db.scalars(select(Project)).all()},
+        common_context("Импорт", "Журнал импорта", sessions=db.scalars(stmt).all(), projects=db.scalars(select(Project)).all()),
     )
 
 

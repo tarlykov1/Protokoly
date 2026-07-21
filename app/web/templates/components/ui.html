@@ -1,0 +1,17 @@
+{% macro status_badge(status) -%}
+{% set labels={'draft':'Черновик','validation_required':'Требует проверки','ready':'Готов','error':'С ошибками','uploaded':'Импортирован','parsed':'Импортирован','confirmed':'Импортирован','published':'Тестово опубликован','success':'Тестово опубликован','partial':'Частично опубликован','cancelled':'Отменён','failed':'С ошибками','completed':'Готов'} %}
+{% set cls={'draft':'draft','validation_required':'review','ready':'ready','error':'error','uploaded':'imported','parsed':'imported','confirmed':'imported','published':'published','success':'published','partial':'partial','cancelled':'cancelled','failed':'error','completed':'ready'} %}
+<span class="status-badge status-{{ cls.get(status,'draft') }}"><span aria-hidden="true">●</span>{{ labels.get(status,status or 'Черновик') }}</span>
+{%- endmacro %}
+{% macro readiness(percent, label='Готовность') -%}
+<div class="readiness" aria-label="{{ label }} {{ percent }}%"><div class="d-flex justify-content-between small mb-1"><span>{{ label }}</span><strong>{{ percent }}%</strong></div><div class="readiness-track"><div class="readiness-fill" style="width:{{ percent }}%"></div></div></div>
+{%- endmacro %}
+{% macro metric_card(icon,value,label,hint,href) -%}
+<a class="card-app metric-card" href="{{ href }}"><span class="metric-icon" aria-hidden="true">{{ icon }}</span><span class="metric-value">{{ value }}</span><strong>{{ label }}</strong><span class="small muted">{{ hint }}</span></a>
+{%- endmacro %}
+{% macro empty_state(title, text, action_href=None, action_label=None) -%}
+<div class="empty"><h2 class="h5">{{ title }}</h2><p>{{ text }}</p>{% if action_href %}<a class="btn btn-primary" href="{{ action_href }}">{{ action_label }}</a>{% endif %}</div>
+{%- endmacro %}
+{% macro task_card(t, errors=[], warnings=[], assessment=None, section=None) -%}
+<div class="task-card mb-2"><div class="d-flex flex-wrap justify-content-between gap-2"><div><strong>{{ t.number }}. {{ t.title }}</strong><p class="small muted mb-1">Исполнитель: {{ t.assignments|map(attribute='employee.full_name')|join(', ') or '—' }} · Срок: {{ t.deadline or '—' }} · Направление: {{ section.title if section else '—' }} · Тип: {{ 'корневая + подзадачи' if t.create_as_subtasks else 'самостоятельная задача' }}</p>{% for e in errors %}<span class="status-badge status-error">{{ e }}</span>{% endfor %}{% for w in warnings %}<span class="status-badge status-review">{{ w }}</span>{% endfor %}<span class="status-badge status-cancelled">AI: {{ assessment.overall_score if assessment else 'нет оценки' }}</span></div><a class="btn btn-sm btn-outline-primary" href="/protocol-tasks/{{ t.id }}/edit">Редактировать</a></div></div>
+{%- endmacro %}
