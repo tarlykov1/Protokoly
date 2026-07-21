@@ -5,6 +5,7 @@ on:
     branches:
       - work
       - feature/protocol-editor
+      - feature/demo-mvp
   pull_request:
   workflow_dispatch:
 
@@ -41,17 +42,28 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in {1..30}; do
+            pg_isready -h localhost -p 5432 -U postgres -d protocol_management_test && exit 0
+            sleep 1
+          done
+          exit 1
+
       - name: Run Ruff
         run: ruff check .
 
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Show current migration
+        run: alembic current
+
+      - name: Show migration heads
+        run: alembic heads
+
       - name: Run pytest
         run: pytest -q
-
-      - name: Apply and inspect migrations
-        run: |
-          alembic upgrade head
-          alembic current
-          alembic heads
 
       - name: Check application import
         run: python -c "import app.main; print('import ok')"
@@ -74,10 +86,14 @@ jobs:
 
       - name: Check HTTP pages
         run: |
-          curl --fail --silent http://127.0.0.1:8000/health
+          curl --fail --silent http://127.0.0.1:8000/health > /dev/null
           curl --fail --silent http://127.0.0.1:8000/ > /dev/null
-          curl --fail --silent http://127.0.0.1:8000/projects > /dev/null
+          curl --fail --silent http://127.0.0.1:8000/demo > /dev/null
+          curl --fail --silent http://127.0.0.1:8000/demo/dashboard > /dev/null
           curl --fail --silent http://127.0.0.1:8000/protocols > /dev/null
+          curl --fail --silent http://127.0.0.1:8000/protocols/import > /dev/null
+          curl --fail --silent http://127.0.0.1:8000/protocols/imports > /dev/null
+          curl --fail --silent http://127.0.0.1:8000/publication-runs > /dev/null
 
       - name: Stop application
         if: always()
