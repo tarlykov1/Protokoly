@@ -11,23 +11,28 @@ app = FastAPI(title="Protocol Management System")
 templates = Jinja2Templates(directory="app/web/templates")
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/")
 def home(request: Request, db: Session = Depends(get_db)):
     draft_count = db.scalar(select(func.count()).select_from(Protocol).where(Protocol.status == "draft")) or 0
     ready_count = db.scalar(select(func.count()).select_from(Protocol).where(Protocol.status == "ready")) or 0
     error_count = db.scalar(select(func.count()).select_from(Protocol).where(Protocol.status == "validation_required")) or 0
     protocols = db.scalars(select(Protocol).order_by(Protocol.created_at.desc()).limit(5)).all()
-    return templates.TemplateResponse("home.html", {"request": request, "draft_count": draft_count, "ready_count": ready_count, "error_count": error_count, "protocols": protocols})
+    return templates.TemplateResponse(request, "home.html", {"draft_count": draft_count, "ready_count": ready_count, "error_count": error_count, "protocols": protocols})
 
 
 @app.get("/projects")
 def projects(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("projects.html", {"request": request, "projects": db.scalars(select(Project).order_by(Project.name)).all()})
+    return templates.TemplateResponse(request, "projects.html", {"projects": db.scalars(select(Project).order_by(Project.name)).all()})
 
 
 @app.get("/projects/new")
 def new_project(request: Request):
-    return templates.TemplateResponse("project_form.html", {"request": request})
+    return templates.TemplateResponse(request, "project_form.html")
 
 
 @app.post("/projects")
@@ -42,4 +47,4 @@ def protocols(request: Request, db: Session = Depends(get_db), status: str | Non
     stmt = select(Protocol).order_by(Protocol.created_at.desc())
     if status:
         stmt = stmt.where(Protocol.status == status)
-    return templates.TemplateResponse("protocols.html", {"request": request, "protocols": db.scalars(stmt).all(), "status": status})
+    return templates.TemplateResponse(request, "protocols.html", {"protocols": db.scalars(stmt).all(), "status": status})
