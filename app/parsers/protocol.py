@@ -170,6 +170,54 @@ def split_assignees(text: str) -> str | None:
     return ", ".join(names) if names else None
 
 
+MEMO_TASK_RE = re.compile(r"^\s*(?P<num>\d{1,3})\s*[.)](?!\d)\s*(?P<title>.*)$")
+DATE_RE = re.compile(r"\b([0-3]?\d)[.\-/]([01]?\d)[.\-/](\d{2}|\d{4})\b")
+ASSIGNEE_LABEL_RE = re.compile(
+    r"^(исполнитель|исполнители|ответственный|ответственные)\s*:?\s*(.*)$", re.I
+)
+DEADLINE_LABEL_RE = re.compile(r"^срок(?:\s+(?:исполнения|выполнения))?\s*:?\s*(.*)$", re.I)
+BLOCK_RE = re.compile(r"^блок\s+\d+\s*:?[\s]*(.*)$", re.I)
+SERVICE_STOP_RE = re.compile(
+    r"^(мемо подготовил|протокол подготовил|секретарь|председатель|подпись|приложение)\s*:", re.I
+)
+
+
+def normalize_docx_text(text: str) -> str:
+    text = text.replace("\xa0", " ").replace("\u202f", " ")
+    text = text.replace("–", "—")
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def _heading_key(text: str) -> str:
+    return re.sub(r"\s+", "", normalize_docx_text(text).rstrip(":")).upper()
+
+
+def _parse_numeric_date(text: str) -> tuple[str | None, str | None]:
+    m = DATE_RE.search(text)
+    if not m:
+        return None, None
+    day, month, year = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    if year < 100:
+        year += 2000
+    try:
+        return date(year, month, day).isoformat(), m.group(0)
+    except ValueError:
+        return None, None
+
+
+def split_assignee_names(value: str) -> list[str]:
+    value = normalize_docx_text(value).strip(" ;,")
+    if not value:
+        return []
+    chunks = re.split(r"[,;\n]+", value)
+    names: list[str] = []
+    for chunk in chunks:
+        chunk = normalize_docx_text(chunk).strip(" ;,")
+        if chunk:
+            names.append(chunk)
+    return names
+
+
 class UniversalProtocolParser:
     parser_type = "universal"
 
@@ -269,6 +317,187 @@ class UniversalProtocolParser:
         return bool(re.match(r"^\d+\.\s+[А-ЯA-Z][^.;]{3,80}$", text))
 
 
+class MemoProtocolParser(UniversalProtocolParser):
+    parser_type = "memo_protocol"
+
+    def confidence(self, document: ParsedDocument) -> ParserChoice:
+        text = "\n".join(normalize_docx_text(e.text) for e in document.elements or [])
+        low = text.lower()
+        features = [
+            ("итоги", "ИТОГИ" in text.upper()),
+            ("отметили", "ОТМЕТИЛИ" in text.upper()),
+            ("решили", "РЕШИЛИ" in text.upper() or "Р Е Ш И Л И" in text.upper()),
+            ("исполнитель", bool(re.search(r"исполнител[ьи]", low))),
+            ("срок", "срок" in low),
+        ]
+        found = [name for name, ok in features if ok]
+        score = 0.95 if len(found) >= 4 else 0.4
+        return ParserChoice(self.parser_type, score, ["Признаки МЕМО/ИТОГИ: " + ", ".join(found)])
+
+    def parse(self, document: ParsedDocument) -> ParserResult:
+        elements = document.elements or [
+            ParsedElement(p.index, p.text, "paragraph", SourceLocation(paragraph_index=p.index))
+            for p in document.paragraphs
+        ]
+        norm_elements = [
+            ParsedElement(
+                e.order,
+                normalize_docx_text(e.text),
+                e.kind,
+                e.location,
+                e.style,
+                tuple(normalize_docx_text(c) for c in e.cells),
+            )
+            for e in elements
+        ]
+        title = next((e.text for e in norm_elements if e.text), "Untitled memo")
+        start = next(
+            (i for i, e in enumerate(norm_elements) if _heading_key(e.text) == "РЕШИЛИ"), None
+        )
+        if start is None:
+            return super().parse(document)
+        tasks: list[ParsedTask] = []
+        sections = [ParsedSection("Без раздела", "", 0, 0.3)]
+        current_block: str | None = None
+        current: dict[str, Any] | None = None
+        mode: str | None = None
+        expected = 1
+
+        def finish() -> None:
+            nonlocal current, expected
+            if not current:
+                return
+            title_text = normalize_docx_text(" ".join(current["text_parts"]))
+            assignees = split_assignee_names("\n".join(current["assignee_parts"]))
+            deadline = current.get("deadline")
+            warnings: list[str] = []
+            if not assignees:
+                warnings.append("Исполнитель не распознан.")
+            if not deadline:
+                warnings.append("Срок не распознан.")
+            if len(title_text) < 10:
+                warnings.append("Текст поручения подозрительно короткий.")
+            if int(current["num"]) != expected:
+                warnings.append("Нарушена последовательность номеров.")
+            expected = int(current["num"]) + 1
+            tasks.append(
+                ParsedTask(
+                    current["order"],
+                    "\n".join(current["raw"]),
+                    current["location"],
+                    current["num"],
+                    title_text,
+                    title_text,
+                    "",
+                    deadline,
+                    current.get("raw_deadline"),
+                    "date" if deadline else "none",
+                    current.get("raw_deadline"),
+                    None,
+                    ", ".join(assignees) if assignees else None,
+                    [{"raw_name": n} for n in assignees],
+                    None,
+                    current.get("block"),
+                    0.94 if not warnings else 0.78,
+                    warnings,
+                    current.get("block") or "Без раздела",
+                )
+            )
+            current = None
+
+        i = start + 1
+        while i < len(norm_elements):
+            e = norm_elements[i]
+            text = e.text
+            if not text:
+                i += 1
+                continue
+            if SERVICE_STOP_RE.match(text):
+                finish()
+                break
+            b = BLOCK_RE.match(text)
+            if b:
+                finish()
+                mode = None
+                name = b.group(1).strip(" :")
+                if not name and i + 1 < len(norm_elements):
+                    nxt = norm_elements[i + 1].text.strip(" :")
+                    if nxt and not MEMO_TASK_RE.match(nxt):
+                        name = nxt
+                        i += 1
+                current_block = name or None
+                if current_block and current_block not in [s.title for s in sections]:
+                    sections.append(
+                        ParsedSection(current_block, text, e.order, 0.9, block_raw=current_block)
+                    )
+                i += 1
+                continue
+            m = MEMO_TASK_RE.match(text)
+            if m:
+                finish()
+                mode = "text"
+                current = {
+                    "num": m.group("num"),
+                    "text_parts": [],
+                    "assignee_parts": [],
+                    "raw": [text],
+                    "order": e.order,
+                    "location": e.location,
+                    "block": current_block,
+                }
+                rest = m.group("title").strip()
+                if rest:
+                    current["text_parts"].append(rest)
+                i += 1
+                continue
+            if not current:
+                i += 1
+                continue
+            current["raw"].append(text)
+            am = ASSIGNEE_LABEL_RE.match(text)
+            dm = DEADLINE_LABEL_RE.match(text)
+            if am:
+                mode = "assignee"
+                if am.group(2):
+                    current["assignee_parts"].append(am.group(2))
+            elif dm:
+                mode = "deadline"
+                value = dm.group(1)
+                deadline, raw = _parse_numeric_date(value or text)
+                if deadline:
+                    current["deadline"] = deadline
+                    current["raw_deadline"] = raw
+            elif mode == "assignee":
+                # stop collecting assignees when a date-like deadline line appears without label
+                deadline, raw = _parse_numeric_date(text)
+                if deadline:
+                    current["deadline"] = deadline
+                    current["raw_deadline"] = raw
+                    mode = "deadline"
+                else:
+                    current["assignee_parts"].append(text)
+            elif mode == "deadline":
+                deadline, raw = _parse_numeric_date(text)
+                if deadline:
+                    current["deadline"] = deadline
+                    current["raw_deadline"] = raw
+            else:
+                current["text_parts"].append(text)
+            i += 1
+        finish()
+        return ParserResult(
+            title,
+            protocol_type="memo",
+            sections=sections,
+            tasks=tasks,
+            metadata={
+                "parser_type": self.parser_type,
+                "element_count": len(norm_elements),
+                "decision_section_index": start,
+            },
+        )
+
+
 class MemoParser(UniversalProtocolParser):
     parser_type = "memo"
 
@@ -302,6 +531,7 @@ class ParserRegistry:
             p.parser_type: p
             for p in [
                 UniversalProtocolParser(),
+                MemoProtocolParser(),
                 MemoParser(),
                 CeoProtocolParser(),
                 DeputyCeoProtocolParser(),
