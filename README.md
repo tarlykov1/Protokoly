@@ -86,9 +86,9 @@ The application supports a staged DOCX import workflow for real protocol drafts 
 7. `POST /protocols/import/{session_id}/cancel` cancels the session without creating core protocol entities.
 8. `/protocols/imports` lists import sessions with filters by project, status, and parser type.
 
-Supported MVP patterns include regular paragraphs, Word headings, uppercase section names, numbered and bulleted-like tasks, DOCX tables with `Поручение / Ответственный / Срок`, absolute Russian dates, relative/periodic deadlines, and raw assignee strings resolved against the local employee directory where possible.
+Supported MVP patterns include regular paragraphs, Word headings, uppercase section names, numbered and bulleted-like tasks, DOCX tables with `Поручение / Ответственный / Срок`, absolute Russian dates, relative/periodic deadlines, and raw assignee strings resolved against the local employee directory where possible. Corporate memo documents with `ИТОГИ`, `ОТМЕТИЛИ`, and `РЕШИЛИ` are parsed by `memo_protocol`: everything before the standalone `РЕШИЛИ` heading is ignored, only numbered decisions after it become tasks, `Исполнитель/Ответственный` lines become assignees, `Срок` lines become ISO dates, `Блок N` headings are carried to following tasks, and service tails such as `Мемо подготовил:` stop task collection.
 
-Parsers are registered in `ParserRegistry`: `UniversalProtocolParser`, `MemoParser`, `CeoProtocolParser`, and `DeputyCeoProtocolParser`. To add a parser, implement the shared `ProtocolParser` interface (`supports`, `confidence`, `parse`) and register it in `ParserRegistry`.
+Parsers are registered in `ParserRegistry`: `MemoProtocolParser` for corporate memo decision documents, `UniversalProtocolParser` as fallback, `MemoParser`, `CeoProtocolParser`, and `DeputyCeoProtocolParser`. To add a parser, implement the shared `ProtocolParser` interface (`supports`, `confidence`, `parse`) and register it in `ParserRegistry`.
 
 Temporary import sessions expire after `IMPORT_SESSION_TTL_HOURS` (default `24`). Run cleanup with:
 
