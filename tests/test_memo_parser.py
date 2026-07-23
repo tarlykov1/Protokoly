@@ -210,6 +210,16 @@ def test_import_preview_endpoint_uses_memo_protocol_for_real_docx_path(db, tmp_p
     payload = session.parsed_payload
     assert session.parser_type == "memo_protocol"
     assert payload["parser_choice"]["parser_type"] == "memo_protocol"
+<<<<<<< HEAD
+    diagnostics = payload["metadata"]["diagnostics"]
+    assert diagnostics["element_count"] >= 30
+    assert len(diagnostics["first_30_normalized_elements"]) == 30
+    assert diagnostics["decision_section_index"] == 4
+    assert diagnostics["memo_prepared_index"] == 35
+    assert diagnostics["elements_between_decision_and_prepared"] == 30
+    assert diagnostics["rejection_reasons"] == []
+=======
+>>>>>>> origin/main
     assert len(payload["tasks"]) == 9
     titles = "\n".join(t["title"] for t in payload["tasks"])
     assert "МЕМО" not in titles
