@@ -389,15 +389,22 @@ class MemoProtocolParser(UniversalProtocolParser):
         }
         logger.info("Memo parser diagnostics: %s", diagnostics)
         if start is None:
+<<<<<<< HEAD
             diagnostics["rejection_reasons"] = [
                 {"index": i, "reason": "раздел РЕШИЛИ не найден"}
                 for i, _ in enumerate(norm_elements)
             ]
+=======
+>>>>>>> origin/main
             return ParserResult(
                 title,
                 protocol_type="memo",
                 warnings=["Раздел РЕШИЛИ не найден."],
+<<<<<<< HEAD
                 metadata={"parser_type": self.parser_type, "diagnostics": diagnostics},
+=======
+                metadata={"parser_type": self.parser_type},
+>>>>>>> origin/main
             )
         tasks: list[ParsedTask] = []
         sections = [ParsedSection("Без раздела", "", 0, 0.3)]
