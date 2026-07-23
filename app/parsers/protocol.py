@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -175,10 +178,14 @@ DATE_RE = re.compile(r"\b([0-3]?\d)[.\-/]([01]?\d)[.\-/](\d{2}|\d{4})\b")
 ASSIGNEE_LABEL_RE = re.compile(
     r"^(исполнитель|исполнители|ответственный|ответственные)\s*:?\s*(.*)$", re.I
 )
-DEADLINE_LABEL_RE = re.compile(r"^срок(?:\s+(?:исполнения|выполнения))?\s*:?\s*(.*)$", re.I)
+DEADLINE_LABEL_RE = re.compile(
+    r"^срок(?:\s+(?:исполнения|выполнения))?(?:\s+до)?\s*[:—–-]?\s*(.*)$", re.I
+)
 BLOCK_RE = re.compile(r"^блок\s+\d+\s*:?[\s]*(.*)$", re.I)
 SERVICE_STOP_RE = re.compile(
-    r"^(мемо подготовил|протокол подготовил|секретарь|председатель|подпись|приложение)\s*:", re.I
+    r"^(мемо подготовил|протокол подготовил|секретарь|председатель|подпись|приложение)"
+    r"\b\s*:?.*",
+    re.I,
 )
 
 
@@ -189,7 +196,16 @@ def normalize_docx_text(text: str) -> str:
 
 
 def _heading_key(text: str) -> str:
-    return re.sub(r"\s+", "", normalize_docx_text(text).rstrip(":")).upper()
+    text = normalize_docx_text(text).strip(" \"«»“”‘’:")
+    return re.sub(r"\s+", "", text).upper()
+
+
+def _memo_text(document: ParsedDocument) -> str:
+    parts = [document.filename]
+    parts.extend(e.text for e in document.elements)
+    if not document.elements:
+        parts.extend(p.text for p in document.paragraphs)
+    return "\n".join(normalize_docx_text(p) for p in parts if p)
 
 
 def _parse_numeric_date(text: str) -> tuple[str | None, str | None]:
@@ -321,18 +337,21 @@ class MemoProtocolParser(UniversalProtocolParser):
     parser_type = "memo_protocol"
 
     def confidence(self, document: ParsedDocument) -> ParserChoice:
-        text = "\n".join(normalize_docx_text(e.text) for e in document.elements or [])
+        text = _memo_text(document)
         low = text.lower()
+        heading_keys = {_heading_key(line) for line in text.splitlines()}
         features = [
-            ("итоги", "ИТОГИ" in text.upper()),
-            ("отметили", "ОТМЕТИЛИ" in text.upper()),
-            ("решили", "РЕШИЛИ" in text.upper() or "Р Е Ш И Л И" in text.upper()),
+            ("filename_memo", "мемо" in document.filename.lower()),
+            ("memo", "мемо" in low),
+            ("решили", "РЕШИЛИ" in heading_keys),
             ("исполнитель", bool(re.search(r"исполнител[ьи]", low))),
-            ("срок", "срок" in low),
+            ("срок", bool(re.search(r"\bсрок\b", low))),
+            ("блок", bool(re.search(r"(^|\n)\s*блок\s+\d+", low))),
+            ("мемо подготовил", "мемо подготовил" in low),
         ]
         found = [name for name, ok in features if ok]
-        score = 0.95 if len(found) >= 4 else 0.4
-        return ParserChoice(self.parser_type, score, ["Признаки МЕМО/ИТОГИ: " + ", ".join(found)])
+        score = 0.95 if len(found) >= 4 and "решили" in found else 0.4
+        return ParserChoice(self.parser_type, score, ["Признаки МЕМО: " + ", ".join(found)])
 
     def parse(self, document: ParsedDocument) -> ParserResult:
         elements = document.elements or [
@@ -355,7 +374,12 @@ class MemoProtocolParser(UniversalProtocolParser):
             (i for i, e in enumerate(norm_elements) if _heading_key(e.text) == "РЕШИЛИ"), None
         )
         if start is None:
-            return super().parse(document)
+            return ParserResult(
+                title,
+                protocol_type="memo",
+                warnings=["Раздел РЕШИЛИ не найден."],
+                metadata={"parser_type": self.parser_type},
+            )
         tasks: list[ParsedTask] = []
         sections = [ParsedSection("Без раздела", "", 0, 0.3)]
         current_block: str | None = None
@@ -463,19 +487,18 @@ class MemoProtocolParser(UniversalProtocolParser):
             elif dm:
                 mode = "deadline"
                 value = dm.group(1)
+                if not value and i + 1 < len(norm_elements):
+                    nxt = norm_elements[i + 1].text
+                    if DATE_RE.search(nxt):
+                        value = nxt
+                        current["raw"].append(nxt)
+                        i += 1
                 deadline, raw = _parse_numeric_date(value or text)
                 if deadline:
                     current["deadline"] = deadline
                     current["raw_deadline"] = raw
             elif mode == "assignee":
-                # stop collecting assignees when a date-like deadline line appears without label
-                deadline, raw = _parse_numeric_date(text)
-                if deadline:
-                    current["deadline"] = deadline
-                    current["raw_deadline"] = raw
-                    mode = "deadline"
-                else:
-                    current["assignee_parts"].append(text)
+                current["assignee_parts"].append(text)
             elif mode == "deadline":
                 deadline, raw = _parse_numeric_date(text)
                 if deadline:
@@ -530,11 +553,11 @@ class ParserRegistry:
         self.parsers = {
             p.parser_type: p
             for p in [
-                UniversalProtocolParser(),
                 MemoProtocolParser(),
                 MemoParser(),
                 CeoProtocolParser(),
                 DeputyCeoProtocolParser(),
+                UniversalProtocolParser(),
             ]
         }
 
@@ -554,8 +577,18 @@ class ParserRegistry:
                 choice.warnings,
             )
         choices = [(p, p.confidence(document)) for p in self.parsers.values()]
-        parser, choice = max(choices, key=lambda item: item[1].confidence)
-        if choice.confidence < 0.6:
+        for candidate, candidate_choice in choices:
+            logger.info(
+                "Parser candidate %s confidence=%.2f reasons=%s",
+                candidate.parser_type,
+                candidate_choice.confidence,
+                candidate_choice.reasons,
+            )
+        specialized = [
+            (p, c) for p, c in choices if p.parser_type != "universal" and c.confidence >= 0.75
+        ]
+        parser, choice = max(specialized or choices, key=lambda item: item[1].confidence)
+        if not specialized and choice.confidence < 0.6:
             parser = self.parsers["universal"]
             choice = ParserChoice(
                 "universal",
