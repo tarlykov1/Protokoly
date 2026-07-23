@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.db.models.domain import Employee, Project
+from app.db.models.domain import Employee, ImportSession, Project
 from app.parsers.docx import parse_docx
 from app.parsers.protocol import (
     MemoProtocolParser,
@@ -130,3 +130,106 @@ def test_import_preview_uses_memo_protocol(db, tmp_path):
     assert session.parsed_payload["parser_choice"]["parser_type"] == "memo_protocol"
     assert len(session.parsed_payload["tasks"]) == 9
     assert not any("Срок не распознан" in w for w in session.warnings_payload)
+
+
+def build_structured_memo_docx(path: Path) -> Path:
+    doc = Document()
+    for line in [
+        "МЕМО М-026/26",
+        "03.05.2026, г. Санкт-Петербург",
+        "ОТМЕТИЛИ",
+        "создание Единого центра компетенций",
+        "Р Е Ш И Л И :",
+        "1. Уточнить потребность 04.05.26 по результатам совещания",
+        "Исполнитель: Адриан С.А., Грибачев С.П.",
+        "Срок: 12.05.2026",
+        "2. Подготовить план мероприятий",
+        "Исполнитель: Прокофьев Д.Ю., Адриан С.А.",
+        "Срок 15.05.2026",
+        "Блок 1: Организация работ на проекте Усть-Луга",
+        "3. Согласовать порядок взаимодействия",
+        "Исполнитель: Иванов И.И.",
+        "Срок – 12.05.2026",
+        "4. Проверить доступы",
+        "Исполнитель: Петров П.П.",
+        "Срок до 14.05.2026",
+        "Блок 2: Укомплектование ЛР",
+        "5. Сформировать список потребностей",
+        "Исполнитель: Сидоров С.С.",
+        "Срок: 16.05.2026",
+        "6. Провести сверку состава",
+        "Исполнитель: Смирнов С.С.",
+        "Срок: 17.05.2026",
+        "7. Подготовить отчет",
+        "Исполнитель: Адриан С.А., Прокофьев Д.Ю.",
+        "Срок: 18.05.2026",
+        "Блок 3: Организация работ ЦТЗ",
+        "8. Назначить ответственных",
+        "Исполнитель: Грибачев С.П., Прокофьев Д.Ю.",
+        "Срок: 19.05.2026",
+        "9. Направить итоговое письмо",
+        "Исполнитель: Орлов О.О.",
+        "Срок: 20.05.2026",
+        "Мемо подготовил",
+        "Автор Документа",
+    ]:
+        doc.add_paragraph(line)
+    doc.save(path)
+    return path
+
+
+def test_import_preview_endpoint_uses_memo_protocol_for_real_docx_path(db, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.db.session import get_db
+    from app.main import app
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        path = build_structured_memo_docx(tmp_path / "02_Мемо_М-026_26.docx")
+        with path.open("rb") as f:
+            response = TestClient(app, follow_redirects=False).post(
+                "/protocols/import/preview",
+                data={"project_id": "1", "parser_type": "universal"},
+                files={
+                    "file": (
+                        "02_Мемо_М-026_26 от 03.05.2026.docx",
+                        f,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                },
+            )
+        assert response.status_code == 303
+        session_id = int(response.headers["location"].split("/")[3])
+        session = db.get(ImportSession, session_id)
+    finally:
+        app.dependency_overrides.clear()
+    payload = session.parsed_payload
+    assert session.parser_type == "memo_protocol"
+    assert payload["parser_choice"]["parser_type"] == "memo_protocol"
+    diagnostics = payload["metadata"]["diagnostics"]
+    assert diagnostics["element_count"] >= 30
+    assert len(diagnostics["first_30_normalized_elements"]) == 30
+    assert diagnostics["decision_section_index"] == 4
+    assert diagnostics["memo_prepared_index"] == 35
+    assert diagnostics["elements_between_decision_and_prepared"] == 30
+    assert diagnostics["rejection_reasons"] == []
+    assert len(payload["tasks"]) == 9
+    titles = "\n".join(t["title"] for t in payload["tasks"])
+    assert "МЕМО" not in titles
+    assert "Исполнитель:" not in titles
+    assert "Срок" not in titles
+    assert "Блок" not in titles
+    assert "Мемо подготовил" not in titles
+    assert "Автор Документа" not in titles
+    assert payload["tasks"][0]["deadline"] == "2026-05-12"
+    assert payload["tasks"][0]["assignee_raw"] == "Адриан С.А., Грибачев С.П."
+    assert payload["tasks"][0]["title"].endswith("по результатам совещания")
+    assert payload["tasks"][0]["deadline"] != "2026-05-04"
+    assert payload["tasks"][2]["block_raw"] == "Организация работ на проекте Усть-Луга"
+    assert payload["tasks"][4]["block_raw"] == "Укомплектование ЛР"
+    assert payload["tasks"][7]["block_raw"] == "Организация работ ЦТЗ"
+    assert not any("Специализированный парсер МЕМО не применён" in w for w in session.warnings_payload)
