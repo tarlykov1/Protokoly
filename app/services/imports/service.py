@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import mimetypes
 import re
 import uuid
@@ -25,6 +26,8 @@ from app.parsers.docx import parse_docx
 from app.parsers.protocol import ParserRegistry
 
 MAX_IMPORT_SIZE = 10 * 1024 * 1024
+logger = logging.getLogger(__name__)
+
 ALLOWED_MIME = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/zip",
@@ -145,10 +148,49 @@ def resolve_payload(db: Session, payload: dict) -> dict:
     return payload
 
 
+def _safe_headings(doc) -> list[str]:
+    headings: list[str] = []
+    for element in doc.elements:
+        text = re.sub(r"\s+", " ", element.text).strip()
+        if text and (element.style and "Heading" in element.style or text.upper() == text):
+            headings.append(text[:80])
+        if len(headings) == 5:
+            break
+    return headings
+
+
 def parse_file(db: Session, session: ImportSession, parser_type: str | None = None) -> None:
     doc = parse_docx(session.file_path)
+    paragraph_count = sum(1 for e in doc.elements if e.kind == "paragraph")
+    logger.info(
+        "DOCX import parse start filename=%s paragraphs=%s elements=%s headings=%s",
+        session.original_filename,
+        paragraph_count,
+        len(doc.elements),
+        _safe_headings(doc),
+    )
     parser, choice = ParserRegistry().choose(doc, parser_type)
-    result = parser.parse(doc).to_dict()
+    logger.info(
+        "DOCX import parser selected filename=%s parser=%s confidence=%.2f",
+        session.original_filename,
+        parser.parser_type,
+        choice.confidence,
+    )
+    try:
+        result = parser.parse(doc).to_dict()
+    except Exception:
+        logger.exception(
+            "DOCX import parser failed filename=%s parser=%s; falling back to universal",
+            session.original_filename,
+            parser.parser_type,
+        )
+        fallback = ParserRegistry().get("universal")
+        result = fallback.parse(doc).to_dict()
+        result.setdefault("warnings", []).append(
+            "Специализированный парсер МЕМО не применён. Документ обработан универсальным парсером."
+        )
+        parser = fallback
+        choice = fallback.confidence(doc)
     result["parser_choice"] = {
         "parser_type": choice.parser_type,
         "confidence": choice.confidence,
@@ -162,6 +204,13 @@ def parse_file(db: Session, session: ImportSession, parser_type: str | None = No
     )
     session.parser_type = parser.parser_type
     session.parsed_payload = result
+    if parser.parser_type == "universal" and "мемо" in session.original_filename.lower():
+        result.setdefault("warnings", []).append(
+            "Специализированный парсер МЕМО не применён. Документ обработан универсальным парсером."
+        )
+        logger.warning(
+            "DOCX import memo fallback to universal filename=%s", session.original_filename
+        )
     session.warnings_payload = result.get("warnings", []) + choice.warnings
     session.errors_payload = result.get("errors", [])
     session.status = (
@@ -195,7 +244,8 @@ def create_preview_session(
     )
     db.add(session)
     db.flush()
-    parse_file(db, session, parser_type)
+    auto_parser_type = None if parser_type in (None, "", "universal") else parser_type
+    parse_file(db, session, auto_parser_type)
     db.commit()
     db.refresh(session)
     return session
