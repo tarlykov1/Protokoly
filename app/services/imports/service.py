@@ -283,6 +283,12 @@ def _as_date(value: str | None):
 
 def confirm_session(db: Session, session: ImportSession) -> Protocol:
     payload = session.parsed_payload or {}
+    if not payload.get("tasks"):
+        raise HTTPException(
+            400,
+            "Импорт нельзя подтвердить: не распознано ни одного поручения. "
+            "Повторите распознавание или загрузите другой DOCX.",
+        )
     protocol = Protocol(
         project_id=session.project_id,
         protocol_type=payload.get("protocol_type") or "protocol",

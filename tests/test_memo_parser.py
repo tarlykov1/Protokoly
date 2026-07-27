@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -16,7 +17,7 @@ from app.parsers.protocol import (
     SourceLocation,
     UniversalProtocolParser,
 )
-from app.services.imports.service import create_preview_session
+from app.services.imports.service import confirm_session, create_preview_session
 from tests.test_docx_import_mvp import upload
 
 FIXTURE_TEXT = Path("tests/fixtures/memo_m026_26.txt")
@@ -130,6 +131,30 @@ def test_import_preview_uses_memo_protocol(db, tmp_path):
     assert session.parsed_payload["parser_choice"]["parser_type"] == "memo_protocol"
     assert len(session.parsed_payload["tasks"]) == 9
     assert not any("Срок не распознан" in w for w in session.warnings_payload)
+
+
+def test_empty_memo_cannot_be_confirmed(db, tmp_path):
+    doc = Document()
+    for line in [
+        "МЕМО",
+        "РЕШИЛИ:",
+        "Исполнитель: Иванов И.И.",
+        "Срок: 12.05.2026",
+        "Мемо подготовил: Петров П.П.",
+    ]:
+        doc.add_paragraph(line)
+    path = tmp_path / "empty_memo.docx"
+    doc.save(path)
+
+    session = create_preview_session(db, 1, upload(path, path.name))
+
+    assert session.parsed_payload["tasks"] == []
+    assert session.errors_payload == [
+        "Не удалось распознать ни одного поручения МЕМО. "
+        "Проверьте раздел «РЕШИЛИ» и формат «текст поручения → исполнитель → срок»."
+    ]
+    with pytest.raises(HTTPException, match="не распознано ни одного поручения"):
+        confirm_session(db, session)
 
 
 def build_structured_memo_docx(path: Path) -> Path:
