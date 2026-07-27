@@ -397,6 +397,9 @@ class MemoProtocolParser(UniversalProtocolParser):
                 title,
                 protocol_type="memo",
                 warnings=["Раздел РЕШИЛИ не найден."],
+                errors=[
+                    "Не удалось распознать ни одного поручения МЕМО: раздел «РЕШИЛИ» не найден."
+                ],
                 metadata={"parser_type": self.parser_type, "diagnostics": diagnostics},
             )
         tasks: list[ParsedTask] = []
@@ -406,6 +409,20 @@ class MemoProtocolParser(UniversalProtocolParser):
         mode: str | None = None
         expected = 1
         rejection_reasons: list[dict[str, Any]] = []
+
+        def begin(e: ParsedElement, text: str, number: str | None = None) -> None:
+            """Start a numbered task or assign the next number to a plain-text task."""
+            nonlocal current, mode
+            current = {
+                "num": number or str(len(tasks) + 1),
+                "text_parts": [text] if text else [],
+                "assignee_parts": [],
+                "raw": [e.text],
+                "order": e.order,
+                "location": e.location,
+                "block": current_block,
+            }
+            mode = "text"
 
         def finish() -> None:
             nonlocal current, expected
@@ -494,25 +511,23 @@ class MemoProtocolParser(UniversalProtocolParser):
                             {"index": i, "text": text, "reason": ", ".join(missing)}
                         )
                 finish()
-                mode = "text"
-                current = {
-                    "num": m.group("num"),
-                    "text_parts": [],
-                    "assignee_parts": [],
-                    "raw": [text],
-                    "order": e.order,
-                    "location": e.location,
-                    "block": current_block,
-                }
-                rest = m.group("title").strip()
-                if rest:
-                    current["text_parts"].append(rest)
+                begin(e, m.group("title").strip(), m.group("num"))
                 i += 1
                 continue
             if not current:
-                rejection_reasons.append(
-                    {"index": i, "text": text, "reason": "не является поручением"}
-                )
+                if ASSIGNEE_LABEL_RE.match(text) or DEADLINE_LABEL_RE.match(text):
+                    rejection_reasons.append(
+                        {"index": i, "text": text, "reason": "служебное поле без поручения"}
+                    )
+                else:
+                    begin(e, text)
+                i += 1
+                continue
+            if current.get("deadline") and not (
+                ASSIGNEE_LABEL_RE.match(text) or DEADLINE_LABEL_RE.match(text)
+            ):
+                finish()
+                begin(e, text)
                 i += 1
                 continue
             current["raw"].append(text)
@@ -557,13 +572,19 @@ class MemoProtocolParser(UniversalProtocolParser):
         if not tasks:
             diagnostics["rejection_reasons"] = rejection_reasons
             logger.warning("Memo parser created 0 tasks: %s", rejection_reasons)
+            errors = [
+                "Не удалось распознать ни одного поручения МЕМО. "
+                "Проверьте раздел «РЕШИЛИ» и формат «текст поручения → исполнитель → срок»."
+            ]
         else:
             diagnostics["rejection_reasons"] = []
+            errors = []
         return ParserResult(
             title,
             protocol_type="memo",
             sections=sections,
             tasks=tasks,
+            errors=errors,
             metadata={"parser_type": self.parser_type, "diagnostics": diagnostics},
         )
 
