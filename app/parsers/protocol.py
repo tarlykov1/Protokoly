@@ -181,7 +181,7 @@ ASSIGNEE_LABEL_RE = re.compile(
 DEADLINE_LABEL_RE = re.compile(
     r"^срок(?:\s+(?:исполнения|выполнения))?(?:\s+до)?\s*[:—–-]?\s*(.*)$", re.I
 )
-BLOCK_RE = re.compile(r"^блок\s+\d+\s*:?[\s]*(.*)$", re.I)
+BLOCK_RE = re.compile(r"^(?:блок\s+\d+\s*:?\s*(?P<number>.*)|#\s*(?P<tag>.+))$", re.I)
 SERVICE_STOP_RE = re.compile(
     r"^(мемо подготовил|протокол подготовил|секретарь|председатель|подпись|приложение)"
     r"\b\s*:?.*",
@@ -358,17 +358,35 @@ class MemoProtocolParser(UniversalProtocolParser):
             ParsedElement(p.index, p.text, "paragraph", SourceLocation(paragraph_index=p.index))
             for p in document.paragraphs
         ]
-        norm_elements = [
-            ParsedElement(
-                e.order,
-                normalize_docx_text(e.text),
-                e.kind,
-                e.location,
-                e.style,
-                tuple(normalize_docx_text(c) for c in e.cells),
-            )
-            for e in elements
-        ]
+        norm_elements: list[ParsedElement] = []
+        for e in elements:
+            if e.kind == "table_row" and e.cells:
+                # A table row is not a sentence.  Flatten its cells in visual order, retaining
+                # row/cell coordinates, so labels can consume a value from the adjacent cell.
+                for cell_index, cell in enumerate(e.cells):
+                    for line in cell.splitlines():
+                        text = normalize_docx_text(line)
+                        if text:
+                            norm_elements.append(
+                                ParsedElement(
+                                    len(norm_elements),
+                                    text,
+                                    "table_cell",
+                                    SourceLocation(
+                                        table_index=e.location.table_index,
+                                        row_index=e.location.row_index,
+                                        cell_index=cell_index,
+                                    ),
+                                )
+                            )
+            else:
+                text = normalize_docx_text(e.text)
+                if text:
+                    norm_elements.append(
+                        ParsedElement(
+                            len(norm_elements), text, e.kind, e.location, e.style
+                        )
+                    )
         title = next((e.text for e in norm_elements if e.text), "Untitled memo")
         first_elements = [e.text for e in norm_elements[:30]]
         start = next(
@@ -403,7 +421,7 @@ class MemoProtocolParser(UniversalProtocolParser):
                 metadata={"parser_type": self.parser_type, "diagnostics": diagnostics},
             )
         tasks: list[ParsedTask] = []
-        sections = [ParsedSection("Без раздела", "", 0, 0.3)]
+        sections: list[ParsedSection] = []
         current_block: str | None = None
         current: dict[str, Any] | None = None
         mode: str | None = None
@@ -485,7 +503,7 @@ class MemoProtocolParser(UniversalProtocolParser):
                 )
                 finish()
                 mode = None
-                name = b.group(1).strip(" :")
+                name = (b.group("number") or b.group("tag") or "").strip(" :")
                 if not name and i + 1 < len(norm_elements):
                     nxt = norm_elements[i + 1].text.strip(" :")
                     if nxt and not MEMO_TASK_RE.match(nxt):
@@ -561,6 +579,8 @@ class MemoProtocolParser(UniversalProtocolParser):
                 current["text_parts"].append(text)
             i += 1
         finish()
+        if not sections:
+            sections.append(ParsedSection("Без раздела", "", 0, 0.3))
         if between_count == 0:
             rejection_reasons.append(
                 {
@@ -569,7 +589,14 @@ class MemoProtocolParser(UniversalProtocolParser):
                     "reason": "между РЕШИЛИ и Мемо подготовил нет элементов; проверьте extractor",
                 }
             )
-        if not tasks:
+        labelled_assignees = any(ASSIGNEE_LABEL_RE.match(e.text) for e in norm_elements)
+        missing_assignees = [t.task_number for t in tasks if not t.assignee_raw]
+        if labelled_assignees and missing_assignees:
+            errors = [
+                "Импорт нельзя подтвердить: исполнители указаны в документе, но не "
+                "распознаны для поручений: " + ", ".join(missing_assignees) + "."
+            ]
+        elif not tasks:
             diagnostics["rejection_reasons"] = rejection_reasons
             logger.warning("Memo parser created 0 tasks: %s", rejection_reasons)
             errors = [
