@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 
 import pytest
@@ -258,3 +259,52 @@ def test_import_preview_endpoint_uses_memo_protocol_for_real_docx_path(db, tmp_p
     assert payload["tasks"][4]["block_raw"] == "Укомплектование ЛР"
     assert payload["tasks"][7]["block_raw"] == "Организация работ ЦТЗ"
     assert not any("Специализированный парсер МЕМО не применён" in w for w in session.warnings_payload)
+
+
+def test_real_tabular_memo_binary_fixture_regression(db, tmp_path):
+    encoded_fixture = Path("tests/fixtures/real_tabular_memo.docx.b64")
+    path = tmp_path / "real_tabular_memo.docx"
+    path.write_bytes(base64.b64decode(encoded_fixture.read_bytes()))
+    document = parse_docx(str(path))
+    result = MemoProtocolParser().parse(document)
+
+    assert len(result.tasks) == 9
+    assert [task.task_number for task in result.tasks] == [str(i) for i in range(1, 10)]
+    assert len(result.sections) == 4
+    assert [section.title for section in result.sections] == [
+        "Сварочный трест",
+        "Монтажный участок",
+        "Проектный офис",
+        "Пусконаладочные работы",
+    ]
+    assert {task.block_raw for task in result.tasks} == {section.title for section in result.sections}
+    assert all(task.assignee_raw for task in result.tasks)
+    assert all(task.deadline for task in result.tasks)
+    assert result.tasks[0].assignee_raw == "Иванов И.И."
+    assert result.tasks[3].assignee_raw == "Смирнов С.С."
+    assert result.tasks[5].assignee_raw == "Волков В.В."
+    assert result.tasks[-1].deadline == "2026-08-20"
+    titles = "\n".join(task.title for task in result.tasks)
+    assert "#Сварочный трест" not in titles
+    assert "Исполнитель" not in titles
+    assert "Срок" not in titles
+    assert "Мемо подготовил" not in titles
+    assert result.errors == []
+
+
+def test_confirmation_is_blocked_when_document_assignee_was_not_recognized(db, tmp_path):
+    doc = Document()
+    doc.add_paragraph("МЕМО")
+    doc.add_paragraph("РЕШИЛИ:")
+    doc.add_paragraph("1. Выполнить обязательное поручение")
+    doc.add_paragraph("Исполнитель:")
+    doc.add_paragraph("Срок: 12.08.2026")
+    path = tmp_path / "missing-assignee.docx"
+    doc.save(path)
+
+    session = create_preview_session(db, 1, upload(path, path.name))
+
+    assert session.parsed_payload["tasks"][0]["assignee_raw"] is None
+    assert "исполнители указаны в документе" in session.errors_payload[0]
+    with pytest.raises(HTTPException, match="ошибки распознавания исполнителей"):
+        confirm_session(db, session)

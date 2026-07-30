@@ -46,8 +46,17 @@ def iter_docx_elements(doc: DocxDocument):
         elif isinstance(child, CT_Tbl):
             table = Table(child, doc)
             for r_idx, row in enumerate(table.rows):
-                cells = tuple(filter(None, (_cell_text(cell) for cell in row.cells)))
-                text = _clean(" | ".join(cells))
+                # Keep empty cells: their positions are meaningful in forms where a label and
+                # its value live in neighbouring cells.  A horizontally merged cell is exposed
+                # by python-docx more than once, so only read its underlying XML node once.
+                seen_cells: set[int] = set()
+                values: list[str] = []
+                for cell in row.cells:
+                    cell_id = id(cell._tc)
+                    values.append("" if cell_id in seen_cells else _cell_text(cell))
+                    seen_cells.add(cell_id)
+                cells = tuple(values)
+                text = _clean(" | ".join(c for c in cells if c))
                 if text:
                     yield ParsedElement(
                         order,

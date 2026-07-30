@@ -289,6 +289,23 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
             "Импорт нельзя подтвердить: не распознано ни одного поручения. "
             "Повторите распознавание или загрузите другой DOCX.",
         )
+    if session.errors_payload or payload.get("errors"):
+        raise HTTPException(
+            400,
+            "Импорт нельзя подтвердить: исправьте ошибки распознавания исполнителей.",
+        )
+    missing_assignees = [
+        str(task.get("task_number") or "?")
+        for task in payload["tasks"]
+        if not task.get("assignee_raw")
+    ]
+    if missing_assignees:
+        raise HTTPException(
+            400,
+            "Импорт нельзя подтвердить: не распознаны исполнители поручений "
+            + ", ".join(missing_assignees)
+            + ".",
+        )
     protocol = Protocol(
         project_id=session.project_id,
         protocol_type=payload.get("protocol_type") or "protocol",
