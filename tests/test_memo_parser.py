@@ -261,6 +261,50 @@ def test_import_preview_endpoint_uses_memo_protocol_for_real_docx_path(db, tmp_p
     assert not any("Специализированный парсер МЕМО не применён" in w for w in session.warnings_payload)
 
 
+def test_reparse_endpoint_reuses_memo_parser_and_produces_identical_result(db, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.db.session import get_db
+    from app.main import app
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        path = build_structured_memo_docx(tmp_path / "memo_reparse.docx")
+        with path.open("rb") as file:
+            import_response = TestClient(app, follow_redirects=False).post(
+                "/protocols/import/preview",
+                data={"project_id": "1"},
+                files={
+                    "file": (
+                        "memo-protocol.docx",
+                        file,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                },
+            )
+        session_id = int(import_response.headers["location"].split("/")[3])
+        session = db.get(ImportSession, session_id)
+        first_payload = session.parsed_payload
+
+        reparse_response = TestClient(app, follow_redirects=False).post(
+            f"/protocols/import/{session_id}/reparse",
+            data={"confirm_replace": "true"},
+        )
+        db.refresh(session)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert import_response.status_code == 303
+    assert reparse_response.status_code == 303
+    assert session.parser_id == "memo-protocol"
+    assert session.parser_type == "memo_protocol"
+    assert len(session.parsed_payload["tasks"]) == 9
+    assert session.parsed_payload == first_payload
+
+
 def test_real_tabular_memo_binary_fixture_regression(db, tmp_path):
     encoded_fixture = Path("tests/fixtures/real_tabular_memo.docx.b64")
     path = tmp_path / "real_tabular_memo.docx"

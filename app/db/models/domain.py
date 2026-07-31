@@ -277,6 +277,7 @@ class ImportSession(Base):
     file_size: Mapped[int] = mapped_column(Integer())
     checksum: Mapped[str] = mapped_column(String(64), index=True)
     parser_type: Mapped[str] = mapped_column(String(64), default="universal")
+    parser_id: Mapped[str] = mapped_column(String(64), default="universal")
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
     parsed_payload: Mapped[dict | None] = mapped_column(JSON())
     warnings_payload: Mapped[list | None] = mapped_column(JSON())

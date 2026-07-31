@@ -34,6 +34,11 @@ ALLOWED_MIME = {
 }
 
 
+def _parser_id(parser_type: str) -> str:
+    """Return the stable, externally stored identifier for a parser."""
+    return parser_type.replace("_", "-")
+
+
 def import_dir() -> Path:
     path = Path("var/imports").resolve()
     path.mkdir(parents=True, exist_ok=True)
@@ -59,7 +64,11 @@ def _validate_upload(file: UploadFile, data: bytes) -> None:
 
 
 def duplicate_warnings(
-    db: Session, project_id: int, checksum: str, number: str | None
+    db: Session,
+    project_id: int,
+    checksum: str,
+    number: str | None,
+    exclude_session_id: int | None = None,
 ) -> list[dict]:
     stmt = (
         select(ImportSession)
@@ -68,6 +77,8 @@ def duplicate_warnings(
     )
     result = []
     for s in db.scalars(stmt).all():
+        if s.id == exclude_session_id:
+            continue
         protocol_number = (s.parsed_payload or {}).get("document_number")
         if not number or not protocol_number or protocol_number == number:
             result.append(
@@ -200,9 +211,14 @@ def parse_file(db: Session, session: ImportSession, parser_type: str | None = No
     result["project_id"] = session.project_id
     result = resolve_payload(db, result)
     result["duplicates"] = duplicate_warnings(
-        db, session.project_id, session.checksum, result.get("document_number")
+        db,
+        session.project_id,
+        session.checksum,
+        result.get("document_number"),
+        exclude_session_id=session.id,
     )
     session.parser_type = parser.parser_type
+    session.parser_id = _parser_id(parser.parser_type)
     session.parsed_payload = result
     if parser.parser_type == "universal" and "мемо" in session.original_filename.lower():
         result.setdefault("warnings", []).append(
@@ -235,6 +251,7 @@ def create_preview_session(
         file_size=len(data),
         checksum=checksum,
         parser_type="universal",
+        parser_id="universal",
         status="uploaded",
         expires_at=datetime.now(UTC) + timedelta(hours=get_settings().import_session_ttl_hours),
         parsed_payload={},
@@ -257,7 +274,7 @@ def update_session_payload(db: Session, session: ImportSession, payload: str) ->
     db.commit()
 
 
-def reparse_session(db: Session, session: ImportSession, parser_type: str, confirmed: bool) -> None:
+def reparse_session(db: Session, session: ImportSession, confirmed: bool) -> None:
     if not confirmed:
         raise HTTPException(400, "Reparse requires confirmation")
     history = list(session.parse_history or [])
@@ -265,11 +282,14 @@ def reparse_session(db: Session, session: ImportSession, parser_type: str, confi
         {
             "at": datetime.now(UTC).isoformat(),
             "parser_type": session.parser_type,
+            "parser_id": session.parser_id,
             "payload": session.parsed_payload,
         }
     )
     session.parse_history = history
-    parse_file(db, session, parser_type)
+    # Re-analysis must be deterministic: auto-detection is only for the initial import.
+    # parser_type is retained as a fallback for sessions created before parser_id existed.
+    parse_file(db, session, session.parser_id or session.parser_type)
     db.commit()
 
 
