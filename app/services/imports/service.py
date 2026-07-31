@@ -34,6 +34,11 @@ ALLOWED_MIME = {
 }
 
 
+def _parser_id(parser_type: str) -> str:
+    """Return the stable, externally stored identifier for a parser."""
+    return parser_type.replace("_", "-")
+
+
 def import_dir() -> Path:
     path = Path("var/imports").resolve()
     path.mkdir(parents=True, exist_ok=True)
@@ -59,7 +64,11 @@ def _validate_upload(file: UploadFile, data: bytes) -> None:
 
 
 def duplicate_warnings(
-    db: Session, project_id: int, checksum: str, number: str | None
+    db: Session,
+    project_id: int,
+    checksum: str,
+    number: str | None,
+    exclude_session_id: int | None = None,
 ) -> list[dict]:
     stmt = (
         select(ImportSession)
@@ -68,6 +77,8 @@ def duplicate_warnings(
     )
     result = []
     for s in db.scalars(stmt).all():
+        if s.id == exclude_session_id:
+            continue
         protocol_number = (s.parsed_payload or {}).get("document_number")
         if not number or not protocol_number or protocol_number == number:
             result.append(
@@ -200,9 +211,14 @@ def parse_file(db: Session, session: ImportSession, parser_type: str | None = No
     result["project_id"] = session.project_id
     result = resolve_payload(db, result)
     result["duplicates"] = duplicate_warnings(
-        db, session.project_id, session.checksum, result.get("document_number")
+        db,
+        session.project_id,
+        session.checksum,
+        result.get("document_number"),
+        exclude_session_id=session.id,
     )
     session.parser_type = parser.parser_type
+    session.parser_id = _parser_id(parser.parser_type)
     session.parsed_payload = result
     if parser.parser_type == "universal" and "мемо" in session.original_filename.lower():
         result.setdefault("warnings", []).append(
@@ -235,6 +251,7 @@ def create_preview_session(
         file_size=len(data),
         checksum=checksum,
         parser_type="universal",
+        parser_id="universal",
         status="uploaded",
         expires_at=datetime.now(UTC) + timedelta(hours=get_settings().import_session_ttl_hours),
         parsed_payload={},
@@ -257,7 +274,7 @@ def update_session_payload(db: Session, session: ImportSession, payload: str) ->
     db.commit()
 
 
-def reparse_session(db: Session, session: ImportSession, parser_type: str, confirmed: bool) -> None:
+def reparse_session(db: Session, session: ImportSession, confirmed: bool) -> None:
     if not confirmed:
         raise HTTPException(400, "Reparse requires confirmation")
     history = list(session.parse_history or [])
@@ -265,11 +282,14 @@ def reparse_session(db: Session, session: ImportSession, parser_type: str, confi
         {
             "at": datetime.now(UTC).isoformat(),
             "parser_type": session.parser_type,
+            "parser_id": session.parser_id,
             "payload": session.parsed_payload,
         }
     )
     session.parse_history = history
-    parse_file(db, session, parser_type)
+    # Re-analysis must be deterministic: auto-detection is only for the initial import.
+    # parser_type is retained as a fallback for sessions created before parser_id existed.
+    parse_file(db, session, session.parser_id or session.parser_type)
     db.commit()
 
 
@@ -279,6 +299,32 @@ def _as_date(value: str | None):
     if isinstance(value, date):
         return value
     return date.fromisoformat(value)
+
+
+def _task_assignees(task: dict) -> list[dict]:
+    """Normalize resolved and raw parser assignees into assignment dictionaries."""
+    candidates = task.get("assignee_resolution") or task.get("assignees") or []
+    if isinstance(candidates, str):
+        candidates = [candidates]
+    assignees = []
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            candidate = {"raw": candidate}
+        raw_name = candidate.get("raw") or candidate.get("raw_name") or candidate.get("name")
+        assignees.append(
+            {
+                "employee_id": candidate.get("employee_id"),
+                "employee_list_id": candidate.get("employee_list_id"),
+                "raw_name": raw_name,
+            }
+        )
+    if not assignees and task.get("assignee_raw"):
+        assignees = [
+            {"employee_id": None, "employee_list_id": None, "raw_name": name.strip()}
+            for name in re.split(r"[,;/]", task["assignee_raw"])
+            if name.strip()
+        ]
+    return assignees
 
 
 def confirm_session(db: Session, session: ImportSession) -> Protocol:
@@ -332,16 +378,21 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
         db.add(sec)
         db.flush()
         section_by_title[sec.title] = sec
-    if "Без раздела" not in section_by_title:
+    task_section_titles = []
+    for task_payload in payload.get("tasks", []):
+        candidates = [task_payload.get("block_raw"), task_payload.get("section_title")]
+        task_section_titles.append(next((x for x in candidates if x in section_by_title), None))
+    if any(title is None for title in task_section_titles):
         sec = ProtocolSection(protocol_id=protocol.id, title="Без раздела", sort_order=0)
         db.add(sec)
         db.flush()
         section_by_title[sec.title] = sec
     for i, t in enumerate(payload.get("tasks", []), 1):
         loc = t.get("source_location") or {}
+        section_title = task_section_titles[i - 1] or "Без раздела"
         task = ProtocolTask(
             protocol_id=protocol.id,
-            section_id=section_by_title.get(t.get("section_title") or "Без раздела").id,
+            section_id=section_by_title[section_title].id,
             number=t.get("task_number") or str(i),
             title=(t.get("title") or "Поручение")[:500],
             description=t.get("description"),
@@ -356,16 +407,16 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
         )
         db.add(task)
         db.flush()
-        for order, r in enumerate(t.get("assignee_resolution") or [], 1):
-            if r.get("employee_id") or r.get("employee_list_id"):
-                db.add(
-                    ProtocolTaskAssignment(
-                        protocol_task_id=task.id,
-                        employee_id=r.get("employee_id"),
-                        source_employee_list_id=r.get("employee_list_id"),
-                        sort_order=order,
-                    )
+        for order, assignee in enumerate(_task_assignees(t), 1):
+            db.add(
+                ProtocolTaskAssignment(
+                    protocol_task_id=task.id,
+                    employee_id=assignee["employee_id"],
+                    source_employee_list_id=assignee["employee_list_id"],
+                    individual_title=assignee["raw_name"],
+                    sort_order=order,
                 )
+            )
     session.status = "confirmed"
     session.confirmed_at = datetime.now(UTC)
     session.protocol_id = protocol.id

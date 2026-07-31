@@ -180,6 +180,11 @@ class ProtocolTaskAssignment(Base):
     protocol_task: Mapped[ProtocolTask] = relationship(back_populates="assignments")
     employee: Mapped[Employee | None] = relationship()
 
+    @property
+    def assignee_name(self) -> str | None:
+        """Name shown for both resolved employees and assignees preserved from an import."""
+        return self.employee.full_name if self.employee else self.individual_title
+
 
 class BitrixTaskLink(Base):
     __tablename__ = "bitrix_task_links"
@@ -277,6 +282,7 @@ class ImportSession(Base):
     file_size: Mapped[int] = mapped_column(Integer())
     checksum: Mapped[str] = mapped_column(String(64), index=True)
     parser_type: Mapped[str] = mapped_column(String(64), default="universal")
+    parser_id: Mapped[str] = mapped_column(String(64), default="universal")
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
     parsed_payload: Mapped[dict | None] = mapped_column(JSON())
     warnings_payload: Mapped[list | None] = mapped_column(JSON())
