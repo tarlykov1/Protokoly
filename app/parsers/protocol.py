@@ -657,20 +657,15 @@ class ParserRegistry:
         }
 
     def get(self, parser_type: str | None) -> ProtocolParser:
-        return self.parsers.get(parser_type or "", self.parsers["universal"])
+        normalized = (parser_type or "").replace("-", "_")
+        return self.parsers.get(normalized, self.parsers["universal"])
 
     def choose(
         self, document: ParsedDocument, requested: str | None = None
     ) -> tuple[ProtocolParser, ParserChoice]:
         if requested:
             parser = self.get(requested)
-            choice = parser.confidence(document)
-            return parser, ParserChoice(
-                parser.parser_type,
-                1.0,
-                ["Парсер выбран пользователем", *choice.reasons],
-                choice.warnings,
-            )
+            return parser, parser.confidence(document)
         choices = [(p, p.confidence(document)) for p in self.parsers.values()]
         for candidate, candidate_choice in choices:
             logger.info(

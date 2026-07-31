@@ -105,7 +105,7 @@ def test_update_reopen_and_reparse_history(db, tmp_path, monkeypatch):
 
     update_session_payload(db, session, json.dumps(payload))
     assert db.get(ImportSession, session.id).parsed_payload["document_title"] == "Исправлено"
-    reparse_session(db, session, "memo", True)
+    reparse_session(db, session, True)
     assert session.parse_history
 
 

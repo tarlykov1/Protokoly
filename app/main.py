@@ -222,12 +222,11 @@ def import_session_update(session_id: int, payload: str = Form(...), db: Session
 @app.post("/protocols/import/{session_id}/reparse")
 def import_session_reparse(
     session_id: int,
-    parser_type: str = Form("universal"),
     confirm_replace: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     session = db.get(ImportSession, session_id)
-    reparse_session(db, session, parser_type, confirm_replace)
+    reparse_session(db, session, confirm_replace)
     return RedirectResponse(f"/protocols/import/{session_id}/preview", status_code=303)
 
 
