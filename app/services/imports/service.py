@@ -301,6 +301,32 @@ def _as_date(value: str | None):
     return date.fromisoformat(value)
 
 
+def _task_assignees(task: dict) -> list[dict]:
+    """Normalize resolved and raw parser assignees into assignment dictionaries."""
+    candidates = task.get("assignee_resolution") or task.get("assignees") or []
+    if isinstance(candidates, str):
+        candidates = [candidates]
+    assignees = []
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            candidate = {"raw": candidate}
+        raw_name = candidate.get("raw") or candidate.get("raw_name") or candidate.get("name")
+        assignees.append(
+            {
+                "employee_id": candidate.get("employee_id"),
+                "employee_list_id": candidate.get("employee_list_id"),
+                "raw_name": raw_name,
+            }
+        )
+    if not assignees and task.get("assignee_raw"):
+        assignees = [
+            {"employee_id": None, "employee_list_id": None, "raw_name": name.strip()}
+            for name in re.split(r"[,;/]", task["assignee_raw"])
+            if name.strip()
+        ]
+    return assignees
+
+
 def confirm_session(db: Session, session: ImportSession) -> Protocol:
     payload = session.parsed_payload or {}
     if not payload.get("tasks"):
@@ -352,16 +378,21 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
         db.add(sec)
         db.flush()
         section_by_title[sec.title] = sec
-    if "Без раздела" not in section_by_title:
+    task_section_titles = []
+    for task_payload in payload.get("tasks", []):
+        candidates = [task_payload.get("block_raw"), task_payload.get("section_title")]
+        task_section_titles.append(next((x for x in candidates if x in section_by_title), None))
+    if any(title is None for title in task_section_titles):
         sec = ProtocolSection(protocol_id=protocol.id, title="Без раздела", sort_order=0)
         db.add(sec)
         db.flush()
         section_by_title[sec.title] = sec
     for i, t in enumerate(payload.get("tasks", []), 1):
         loc = t.get("source_location") or {}
+        section_title = task_section_titles[i - 1] or "Без раздела"
         task = ProtocolTask(
             protocol_id=protocol.id,
-            section_id=section_by_title.get(t.get("section_title") or "Без раздела").id,
+            section_id=section_by_title[section_title].id,
             number=t.get("task_number") or str(i),
             title=(t.get("title") or "Поручение")[:500],
             description=t.get("description"),
@@ -376,16 +407,16 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
         )
         db.add(task)
         db.flush()
-        for order, r in enumerate(t.get("assignee_resolution") or [], 1):
-            if r.get("employee_id") or r.get("employee_list_id"):
-                db.add(
-                    ProtocolTaskAssignment(
-                        protocol_task_id=task.id,
-                        employee_id=r.get("employee_id"),
-                        source_employee_list_id=r.get("employee_list_id"),
-                        sort_order=order,
-                    )
+        for order, assignee in enumerate(_task_assignees(t), 1):
+            db.add(
+                ProtocolTaskAssignment(
+                    protocol_task_id=task.id,
+                    employee_id=assignee["employee_id"],
+                    source_employee_list_id=assignee["employee_list_id"],
+                    individual_title=assignee["raw_name"],
+                    sort_order=order,
                 )
+            )
     session.status = "confirmed"
     session.confirmed_at = datetime.now(UTC)
     session.protocol_id = protocol.id

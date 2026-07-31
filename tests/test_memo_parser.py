@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.db.models.domain import Employee, ImportSession, Project
+from app.db.models.domain import Employee, ImportSession, Project, ProtocolSection, ProtocolTask
 from app.parsers.docx import parse_docx
 from app.parsers.protocol import (
     MemoProtocolParser,
@@ -334,6 +334,57 @@ def test_real_tabular_memo_binary_fixture_regression(db, tmp_path):
     assert "Срок" not in titles
     assert "Мемо подготовил" not in titles
     assert result.errors == []
+
+
+def test_real_tabular_memo_confirmation_preserves_sections_assignees_and_deadlines(db, tmp_path):
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from app.db.session import get_db
+    from app.main import app
+
+    path = tmp_path / "real_tabular_memo.docx"
+    path.write_bytes(base64.b64decode(Path("tests/fixtures/real_tabular_memo.docx.b64").read_bytes()))
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app, follow_redirects=False)
+        with path.open("rb") as file:
+            imported = client.post(
+                "/protocols/import/preview",
+                data={"project_id": "1"},
+                files={
+                    "file": (
+                        path.name,
+                        file,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                },
+            )
+        session_id = int(imported.headers["location"].split("/")[3])
+        confirmed = client.post(f"/protocols/import/{session_id}/confirm")
+        session = db.get(ImportSession, session_id)
+        card = client.get(f"/protocols/{session.protocol_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    sections = db.scalars(
+        select(ProtocolSection).where(ProtocolSection.protocol_id == session.protocol_id)
+    ).all()
+    tasks = db.scalars(select(ProtocolTask).where(ProtocolTask.protocol_id == session.protocol_id)).all()
+    assert imported.status_code == 303
+    assert confirmed.status_code == 303
+    assert card.status_code == 200
+    assert len(sections) == 4
+    assert len(tasks) == 9
+    assert all(task.assignments for task in tasks)
+    assert all(task.deadline for task in tasks)
+    assert "Без раздела" not in {section.title for section in sections}
+    assert "Исполнитель: —" not in card.text
+    assert "Иванов И.И." in card.text
 
 
 def test_confirmation_is_blocked_when_document_assignee_was_not_recognized(db, tmp_path):
