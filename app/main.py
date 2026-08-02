@@ -285,6 +285,7 @@ from app.db.models.domain import (
     EmployeeList,
     ProtocolSection,
     ProtocolTaskAssignment,
+    ProtocolTaskLink,
     PublicationRun,
     TaskAssessment,
 )
@@ -295,6 +296,8 @@ from app.services.demo_publication import (
     save_assessment,
     validate_task,
 )
+from app.services.tasks.gateway import FakeTaskGateway
+from app.services.tasks.publication import PublicationNotAllowedError, PublicationService
 
 
 @app.get("/demo-docx")
@@ -652,7 +655,24 @@ async def assess_all(protocol_id: int, db: Session = Depends(get_db)):
 @app.get("/protocols/{protocol_id}/publication-plan")
 def publication_plan(protocol_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.get(Protocol, protocol_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
     rows, errors, warnings = protocol_plan(db, p)
+    links = db.scalars(
+        select(ProtocolTaskLink)
+        .where(ProtocolTaskLink.protocol_task_id.in_([task.id for task in p.tasks] or [0]))
+        .order_by(ProtocolTaskLink.id)
+    ).all()
+    assignee_counts: dict[str, int] = {}
+    for _, planned in rows:
+        assignee_counts[planned.responsible_name] = (
+            assignee_counts.get(planned.responsible_name, 0) + 1
+        )
+    section_count = db.scalar(
+        select(func.count()).select_from(ProtocolSection).where(
+            ProtocolSection.protocol_id == protocol_id
+        )
+    ) or 0
     return templates.TemplateResponse(
         request,
         "publication_plan.html",
@@ -662,8 +682,25 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
             "errors": errors,
             "warnings": warnings,
             "demo_mode": get_settings().demo_mode,
+            "links": links,
+            "assignee_counts": assignee_counts,
+            "section_count": section_count,
         },
     )
+
+
+@app.post("/protocols/{protocol_id}/publish")
+def publish_protocol(protocol_id: int, db: Session = Depends(get_db)):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    existing_count = db.scalar(select(func.count()).select_from(ProtocolTaskLink)) or 0
+    service = PublicationService(db, FakeTaskGateway(start_at=10001 + existing_count))
+    try:
+        service.publish(protocol)
+    except PublicationNotAllowedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RedirectResponse(f"/protocols/{protocol_id}/publication-plan", status_code=303)
 
 
 @app.post("/protocols/{protocol_id}/demo-publish")
