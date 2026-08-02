@@ -162,6 +162,9 @@ class ProtocolTask(TimestampMixin, Base):
         back_populates="protocol_task", cascade="all, delete-orphan"
     )
     bitrix_links: Mapped[list["BitrixTaskLink"]] = relationship(back_populates="protocol_task")
+    external_links: Mapped[list["ProtocolTaskLink"]] = relationship(
+        back_populates="protocol_task", cascade="all, delete-orphan"
+    )
 
 
 class ProtocolTaskAssignment(Base):
@@ -203,6 +206,23 @@ class BitrixTaskLink(Base):
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     protocol_task: Mapped[ProtocolTask] = relationship(back_populates="bitrix_links")
+
+
+class ProtocolTaskLink(TimestampMixin, Base):
+    """Provider-neutral link between a protocol instruction and an external task."""
+
+    __tablename__ = "protocol_task_links"
+    __table_args__ = (
+        UniqueConstraint("external_system", "external_task_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_task_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="CASCADE"), index=True
+    )
+    external_system: Mapped[str] = mapped_column(String(32), default="BITRIX24")
+    external_task_id: Mapped[str] = mapped_column(String(255))
+    external_task_url: Mapped[str | None] = mapped_column(String(1000))
+    protocol_task: Mapped[ProtocolTask] = relationship(back_populates="external_links")
 
 
 class TaskAssessment(Base):
