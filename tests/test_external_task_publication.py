@@ -61,6 +61,8 @@ def test_approved_protocol_is_published_once(publication_db):
     second = service.publish(protocol)
 
     assert protocol.status == "published"
+    assert protocol.tasks[0].control.status == "pending"
+    assert protocol.tasks[0].control.planned_date == protocol.tasks[0].deadline
     assert [link.external_task_id for link in first.links] == ["TASK-10001"]
     assert second.reused is True
     assert db.scalars(select(ProtocolTaskLink)).all() == first.links

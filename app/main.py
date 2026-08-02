@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +18,9 @@ from app.services.imports.service import (
 from app.services.protocols.control import (
     STATUS_LABELS,
     ControlActor,
+    ControlValidationError,
     InvalidStatusTransition,
+    OverdueChecker,
     ProtocolControlService,
     StatusChangeForbidden,
     days_remaining,
@@ -462,6 +466,7 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
             "warnings": warnings,
             "without_assignee": without_assignee,
             "without_deadline": without_deadline,
+            "control_progress": ProtocolControlService.progress(list(p.tasks)),
         },
     )
 
@@ -476,16 +481,20 @@ def protocol_control(
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
-    service = ProtocolControlService(db)
     tasks = list(protocol.tasks)
-    service.mark_overdue(tasks)
+    OverdueChecker(db).check(tasks)
+    service = ProtocolControlService(db)
     filters = {
         "in_progress": {"in_progress", "waiting_control"},
         "completed": {"completed"},
         "overdue": {"overdue"},
-        "without_status": {"", None},
+        "attention": {"overdue", "rejected"},
     }
-    visible_tasks = [task for task in tasks if task.status in filters[filter]] if filter in filters else tasks
+    visible_tasks = (
+        [task for task in tasks if task.control and task.control.status in filters[filter]]
+        if filter in filters
+        else tasks
+    )
     return templates.TemplateResponse(
         request,
         "protocol_control.html",
@@ -525,6 +534,24 @@ def change_protocol_task_status(
     except InvalidStatusTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RedirectResponse(f"/protocols/{protocol_id}/control", status_code=303)
+
+
+@app.post("/protocol-tasks/{task_id}/control")
+def update_task_control(
+    task_id: int,
+    status: str = Form(...),
+    comment: str | None = Form(None),
+    actual_date: date | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    task = db.get(ProtocolTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Поручение не найдено")
+    try:
+        ProtocolControlService(db).update_control(task, status, comment, actual_date)
+    except ControlValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return RedirectResponse(f"/protocols/{task.protocol_id}/control", status_code=303)
 
 
 @app.post("/protocols/{protocol_id}/validate-all")
