@@ -121,6 +121,10 @@ class Protocol(TimestampMixin, Base):
     source_filename: Mapped[str | None] = mapped_column(String(255))
     source_file_path: Mapped[str | None] = mapped_column(String(500))
     created_by: Mapped[str | None] = mapped_column(String(255))
+    initiator: Mapped[str | None] = mapped_column(String(255))
+    responsible: Mapped[str | None] = mapped_column(String(255))
+    participants: Mapped[str | None] = mapped_column(Text())
+    description: Mapped[str | None] = mapped_column(Text())
     project: Mapped[Project] = relationship(back_populates="protocols")
     tasks: Mapped[list["ProtocolTask"]] = relationship(back_populates="protocol")
 
@@ -145,6 +149,7 @@ class ProtocolTask(TimestampMixin, Base):
     protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"))
     section_id: Mapped[int | None] = mapped_column(ForeignKey("protocol_sections.id"))
     number: Mapped[str] = mapped_column(String(64))
+    position: Mapped[int] = mapped_column(Integer(), default=0)
     title: Mapped[str] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text())
     acceptance_criteria: Mapped[str | None] = mapped_column(Text())
@@ -250,9 +255,7 @@ class ProtocolTaskLink(TimestampMixin, Base):
     """Provider-neutral link between a protocol instruction and an external task."""
 
     __tablename__ = "protocol_task_links"
-    __table_args__ = (
-        UniqueConstraint("external_system", "external_task_id"),
-    )
+    __table_args__ = (UniqueConstraint("external_system", "external_task_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     protocol_task_id: Mapped[int] = mapped_column(
         ForeignKey("protocol_tasks.id", ondelete="CASCADE"), index=True

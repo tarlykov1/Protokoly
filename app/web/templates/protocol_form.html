@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block content %}
+<section class="hero mb-3"><h1>Создание протокола</h1><p class="muted">Заполните реквизиты, затем импортируйте МЕМО или добавьте поручения вручную.</p></section>
+<form method="post" action="/protocols" class="panel p-4 protocol-form"><div class="row g-3">
+<div class="col-md-6"><label class="form-label" for="project_id">Проект</label><select required class="form-select" id="project_id" name="project_id"><option value="">Выберите проект</option>{% for project in projects %}<option value="{{ project.id }}">{{ project.name }}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label class="form-label" for="number">Номер</label><input required class="form-control" id="number" name="number"></div><div class="col-md-3"><label class="form-label" for="meeting_date">Дата</label><input required type="date" class="form-control" id="meeting_date" name="meeting_date"></div>
+<div class="col-12"><label class="form-label" for="title">Название</label><input required class="form-control" id="title" name="title"></div>
+<div class="col-md-6"><label class="form-label" for="initiator">Инициатор</label><input required class="form-control" id="initiator" name="initiator"></div><div class="col-md-6"><label class="form-label" for="responsible">Ответственный</label><input required class="form-control" id="responsible" name="responsible"></div>
+<div class="col-12"><label class="form-label" for="participants">Участники</label><textarea class="form-control" id="participants" name="participants" rows="2"></textarea></div><div class="col-12"><label class="form-label" for="description">Описание</label><textarea class="form-control" id="description" name="description" rows="4"></textarea></div>
+</div><div class="mt-3"><button class="btn btn-primary">Создать протокол</button> <a class="btn btn-outline-secondary" href="/protocols">Отмена</a></div></form>{% endblock %}

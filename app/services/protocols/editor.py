@@ -61,6 +61,7 @@ def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask
 
 
 def create_task(db: Session, protocol: Protocol, data: dict) -> ProtocolTask:
+    next_position = max((task.position for task in protocol.tasks), default=-1) + 1
     task = ProtocolTask(
         protocol_id=protocol.id,
         number=data.get("number", str(len(protocol.tasks) + 1)),
@@ -68,6 +69,7 @@ def create_task(db: Session, protocol: Protocol, data: dict) -> ProtocolTask:
         description=data.get("description"),
         status="new",
         validation_status="draft",
+        position=next_position,
     )
     db.add(task)
     db.flush()
@@ -81,14 +83,17 @@ def match_source_name(db: Session, task: ProtocolTask, source_name: str, employe
     normalized = " ".join(source_name.lower().split())
     alias = db.scalar(select(EmployeeAlias).where(EmployeeAlias.normalized_alias == normalized))
     if not alias:
-        db.add(EmployeeAlias(
-            employee_id=employee.id,
-            alias=source_name,
-            normalized_alias=normalized,
-            source="memo_editor",
-        ))
+        db.add(
+            EmployeeAlias(
+                employee_id=employee.id,
+                alias=source_name,
+                normalized_alias=normalized,
+                source="memo_editor",
+            )
+        )
     unresolved = next(
-        (a for a in task.assignments if a.individual_title == source_name and not a.employee_id), None
+        (a for a in task.assignments if a.individual_title == source_name and not a.employee_id),
+        None,
     )
     if unresolved:
         unresolved.employee_id = employee.id

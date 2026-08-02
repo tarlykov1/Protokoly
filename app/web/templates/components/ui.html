@@ -1,6 +1,6 @@
 {% macro status_badge(status) -%}
-{% set labels={'draft':'Черновик','validation_required':'Требует проверки','ready':'Готов','error':'С ошибками','uploaded':'Импортирован','parsed':'Импортирован','confirmed':'Импортирован','published':'Тестово опубликован','success':'Тестово опубликован','partial':'Частично опубликован','cancelled':'Отменён','failed':'С ошибками','completed':'Готов'} %}
-{% set cls={'draft':'draft','validation_required':'review','ready':'ready','error':'error','uploaded':'imported','parsed':'imported','confirmed':'imported','published':'published','success':'published','partial':'partial','cancelled':'cancelled','failed':'error','completed':'ready'} %}
+{% set labels={'draft':'Черновик','review':'На проверке','approved':'Утверждён','validation_required':'Требует проверки','ready':'Готов','error':'С ошибками','uploaded':'Импортирован','parsed':'Импортирован','confirmed':'Импортирован','published':'Тестово опубликован','success':'Тестово опубликован','partial':'Частично опубликован','cancelled':'Отменён','failed':'С ошибками','completed':'Готов'} %}
+{% set cls={'draft':'draft','review':'review','approved':'ready','validation_required':'review','ready':'ready','error':'error','uploaded':'imported','parsed':'imported','confirmed':'imported','published':'published','success':'published','partial':'partial','cancelled':'cancelled','failed':'error','completed':'ready'} %}
 <span class="status-badge status-{{ cls.get(status,'draft') }}"><span aria-hidden="true">●</span>{{ labels.get(status,status or 'Черновик') }}</span>
 {%- endmacro %}
 {% macro readiness(percent, label='Готовность') -%}
