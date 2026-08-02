@@ -51,7 +51,9 @@ def test_missing_technical_user_blocks_subtask_mode():
     assert {error.code for error in plan.errors} == {"technical_user_required"}
 
 
-def test_missing_bitrix_id_is_blocking_error():
+def test_missing_bitrix_id_creates_raw_assignee_with_warning():
     plan = TaskPlanningService().build_plan(project(), task(assignment(1, employee(1, "Ivanov I.I.", None))))
-    assert not plan.can_create
-    assert "employee_bitrix_id_required" in {error.code for error in plan.errors}
+    assert plan.can_create
+    assert plan.tasks[0].assignee_raw == "Ivanov I.I."
+    assert plan.tasks[0].assignee_match_result == "matched_without_bitrix_id"
+    assert {warning.code for warning in plan.warnings} == {"assignee_not_mapped"}

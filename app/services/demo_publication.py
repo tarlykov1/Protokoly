@@ -26,9 +26,6 @@ def validate_task(task: ProtocolTask):
         errors.append("Нет исполнителя")
     if not task.deadline:
         warnings.append("Не указан срок")
-    for a in task.assignments:
-        if a.employee and not a.employee.bitrix_user_id:
-            errors.append(f"Нет Bitrix ID у {a.employee.full_name}")
     task.validation_status = "ready" if not errors else "validation_required"
     return errors, warnings
 
@@ -90,6 +87,10 @@ class FakeTaskGateway:
             "responsible_id": planned.responsible_id,
             "deadline": str(planned.deadline) if planned.deadline else None,
             "parent_external_key": planned.parent_external_key,
+            "assignee_raw": planned.assignee_raw,
+            "original_assignee": planned.original_assignee,
+            "assignee_match_result": planned.assignee_match_result,
+            "missing_bitrix_id_reason": planned.missing_bitrix_id_reason,
         }
         if fail_key and fail_key in planned.external_key:
             return (
