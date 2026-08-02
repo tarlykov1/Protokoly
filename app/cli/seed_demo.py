@@ -220,7 +220,8 @@ def seed():
                     deadline=deadline,
                     priority="normal",
                     create_as_subtasks=subs,
-                    status="draft",
+                    status="new",
+                    validation_status="draft",
                     original_text=f"{num}. {title}",
                 ),
             )

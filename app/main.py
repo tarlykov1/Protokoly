@@ -13,6 +13,14 @@ from app.services.imports.service import (
     reparse_session,
     update_session_payload,
 )
+from app.services.protocols.control import (
+    STATUS_LABELS,
+    ControlActor,
+    InvalidStatusTransition,
+    ProtocolControlService,
+    StatusChangeForbidden,
+    days_remaining,
+)
 from app.services.protocols.editor import (
     apply_task_data,
     editor_errors,
@@ -37,7 +45,7 @@ def readiness_percent(protocol):
         score += 1 if task.title else 0
         score += 1 if task.assignments else 0
         score += 1 if task.deadline else 0
-        score += 1 if task.status in {"ready", "validated", "done"} or protocol.status == "ready" else 0
+        score += 1 if task.validation_status in {"ready", "validated", "done"} or protocol.status == "ready" else 0
         score += 1 if protocol.status not in {"validation_required", "error"} else 0
         ready += score / 5
     return int(100 * ready / len(tasks))
@@ -458,6 +466,67 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
     )
 
 
+@app.get("/protocols/{protocol_id}/control")
+def protocol_control(
+    protocol_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    filter: str = "all",
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    service = ProtocolControlService(db)
+    tasks = list(protocol.tasks)
+    service.mark_overdue(tasks)
+    filters = {
+        "in_progress": {"in_progress", "waiting_control"},
+        "completed": {"completed"},
+        "overdue": {"overdue"},
+        "without_status": {"", None},
+    }
+    visible_tasks = [task for task in tasks if task.status in filters[filter]] if filter in filters else tasks
+    return templates.TemplateResponse(
+        request,
+        "protocol_control.html",
+        common_context(
+            "Протоколы",
+            "Контроль исполнения",
+            protocol=protocol,
+            tasks=visible_tasks,
+            progress=service.progress(tasks),
+            status_labels=STATUS_LABELS,
+            days_remaining=days_remaining,
+            current_filter=filter,
+        ),
+    )
+
+
+@app.post("/protocols/{protocol_id}/control/tasks/{task_id}/status")
+def change_protocol_task_status(
+    protocol_id: int,
+    task_id: int,
+    request: Request,
+    status: str = Form(...),
+    comment: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    task = db.get(ProtocolTask, task_id)
+    if not task or task.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Поручение не найдено")
+    actor = ControlActor(
+        request.headers.get("x-user", "operator"),
+        request.headers.get("x-role", "operator"),
+    )
+    try:
+        ProtocolControlService(db).change_status(task, status, actor, comment)
+    except StatusChangeForbidden as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InvalidStatusTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RedirectResponse(f"/protocols/{protocol_id}/control", status_code=303)
+
+
 @app.post("/protocols/{protocol_id}/validate-all")
 def validate_all(protocol_id: int, db: Session = Depends(get_db)):
     p = db.get(Protocol, protocol_id)
@@ -756,6 +825,7 @@ def edit_task(task_id: int, request: Request, db: Session = Depends(get_db)):
             "employees": db.scalars(select(Employee).order_by(Employee.full_name)).all(),
             "lists": db.scalars(select(EmployeeList).order_by(EmployeeList.name)).all(),
             "sections": db.scalars(select(ProtocolSection)).all(),
+            "status_labels": STATUS_LABELS,
         },
     )
 

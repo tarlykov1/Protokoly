@@ -29,7 +29,7 @@ def validate_task(task: ProtocolTask):
     for a in task.assignments:
         if a.employee and not a.employee.bitrix_user_id:
             errors.append(f"Нет Bitrix ID у {a.employee.full_name}")
-    task.status = "ready" if not errors else "validation_required"
+    task.validation_status = "ready" if not errors else "validation_required"
     return errors, warnings
 
 
