@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -55,6 +56,8 @@ class PublicationService:
                 external_system=self.gateway.external_system,
                 external_task_id=str(external["id"]),
                 external_task_url=external.get("url"),
+                external_status=external.get("status"),
+                last_synced_at=datetime.now(UTC),
             )
             self.db.add(link)
             links.append(link)

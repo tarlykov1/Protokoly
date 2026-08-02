@@ -56,7 +56,7 @@ def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask
                 db.add(assignment)
                 task.assignments.append(assignment)
                 seen.add(employee_id)
-    task.status = "ready" if not editor_errors(task) else "validation_required"
+    task.validation_status = "ready" if not editor_errors(task) else "validation_required"
     return task
 
 
@@ -66,7 +66,8 @@ def create_task(db: Session, protocol: Protocol, data: dict) -> ProtocolTask:
         number=data.get("number", str(len(protocol.tasks) + 1)),
         title=data.get("title", "Новое поручение"),
         description=data.get("description"),
-        status="draft",
+        status="new",
+        validation_status="draft",
     )
     db.add(task)
     db.flush()

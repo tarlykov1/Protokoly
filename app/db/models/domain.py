@@ -152,7 +152,8 @@ class ProtocolTask(TimestampMixin, Base):
     priority: Mapped[str | None] = mapped_column(String(32))
     create_as_subtasks: Mapped[bool] = mapped_column(Boolean(), default=False)
     is_controlled: Mapped[bool] = mapped_column(Boolean(), default=False)
-    status: Mapped[str] = mapped_column(String(32), default="draft")
+    status: Mapped[str] = mapped_column(String(32), default="new")
+    validation_status: Mapped[str] = mapped_column(String(32), default="draft")
     original_text: Mapped[str | None] = mapped_column(Text())
     source_page: Mapped[int | None] = mapped_column(Integer())
     source_paragraph: Mapped[int | None] = mapped_column(Integer())
@@ -165,6 +166,23 @@ class ProtocolTask(TimestampMixin, Base):
     external_links: Mapped[list["ProtocolTaskLink"]] = relationship(
         back_populates="protocol_task", cascade="all, delete-orphan"
     )
+    status_history: Mapped[list["ProtocolTaskStatusHistory"]] = relationship(
+        back_populates="protocol_task", cascade="all, delete-orphan"
+    )
+
+
+class ProtocolTaskStatusHistory(Base):
+    __tablename__ = "protocol_task_status_history"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_task_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="CASCADE"), index=True
+    )
+    old_status: Mapped[str] = mapped_column(String(32))
+    new_status: Mapped[str] = mapped_column(String(32))
+    comment: Mapped[str | None] = mapped_column(Text())
+    changed_by: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    protocol_task: Mapped[ProtocolTask] = relationship(back_populates="status_history")
 
 
 class ProtocolTaskAssignment(Base):
@@ -222,6 +240,8 @@ class ProtocolTaskLink(TimestampMixin, Base):
     external_system: Mapped[str] = mapped_column(String(32), default="BITRIX24")
     external_task_id: Mapped[str] = mapped_column(String(255))
     external_task_url: Mapped[str | None] = mapped_column(String(1000))
+    external_status: Mapped[str | None] = mapped_column(String(64))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     protocol_task: Mapped[ProtocolTask] = relationship(back_populates="external_links")
 
 
