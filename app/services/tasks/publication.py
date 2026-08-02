@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models.domain import Protocol, ProtocolTaskLink
+from app.db.models.domain import Protocol, ProtocolTaskControl, ProtocolTaskLink
 from app.services.demo_publication import protocol_plan
 from app.services.tasks.gateway import TaskGateway
 
@@ -61,6 +61,14 @@ class PublicationService:
             )
             self.db.add(link)
             links.append(link)
+            if protocol_task.control is None:
+                self.db.add(
+                    ProtocolTaskControl(
+                        protocol_task=protocol_task,
+                        status="pending",
+                        planned_date=protocol_task.deadline,
+                    )
+                )
         protocol.status = "published"
         self.db.commit()
         for link in links:

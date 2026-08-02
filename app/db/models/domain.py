@@ -169,6 +169,26 @@ class ProtocolTask(TimestampMixin, Base):
     status_history: Mapped[list["ProtocolTaskStatusHistory"]] = relationship(
         back_populates="protocol_task", cascade="all, delete-orphan"
     )
+    control: Mapped["ProtocolTaskControl | None"] = relationship(
+        back_populates="protocol_task", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class ProtocolTaskControl(TimestampMixin, Base):
+    """Current execution state of a published protocol instruction."""
+
+    __tablename__ = "protocol_task_controls"
+    __table_args__ = (UniqueConstraint("protocol_task_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_task_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    planned_date: Mapped[date | None] = mapped_column(Date())
+    actual_date: Mapped[date | None] = mapped_column(Date())
+    result_comment: Mapped[str | None] = mapped_column(Text())
+    protocol_task: Mapped[ProtocolTask] = relationship(back_populates="control")
 
 
 class ProtocolTaskStatusHistory(Base):

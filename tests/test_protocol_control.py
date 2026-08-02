@@ -78,3 +78,17 @@ def test_control_page_and_progress(control_database):
     assert "Контроль исполнения" in response.text
     assert "Просрочено: 1" in response.text
     assert "Выполнить поручение" in response.text
+
+
+def test_control_requires_comment_and_completes_protocol(control_database):
+    _, db, protocol = control_database
+    service = ProtocolControlService(db)
+
+    with pytest.raises(ValueError, match="комментарий"):
+        service.update_control(protocol.tasks[0], "completed")
+
+    service.update_control(protocol.tasks[0], "completed", "Готово", date.today())
+    service.update_control(protocol.tasks[1], "completed", "Исполнено", date.today())
+
+    assert protocol.status == "completed"
+    assert protocol.tasks[0].control.result_comment == "Готово"

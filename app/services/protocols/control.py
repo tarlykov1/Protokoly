@@ -5,7 +5,14 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.db.models.domain import Protocol, ProtocolTask, ProtocolTaskStatusHistory
+from app.db.models.domain import (
+    Protocol,
+    ProtocolTask,
+    ProtocolTaskControl,
+    ProtocolTaskStatusHistory,
+)
+
+CONTROL_STATUSES = {"pending", "in_progress", "completed", "overdue", "rejected"}
 
 STATUS_LABELS = {
     "new": "Не начато",
@@ -30,6 +37,10 @@ class InvalidStatusTransition(ValueError):
 
 
 class StatusChangeForbidden(PermissionError):
+    pass
+
+
+class ControlValidationError(ValueError):
     pass
 
 
@@ -114,13 +125,71 @@ class ProtocolControlService:
             self.db.commit()
         return changed
 
+    def update_control(
+        self,
+        task: ProtocolTask,
+        status: str,
+        comment: str | None = None,
+        actual_date: date | None = None,
+    ) -> ProtocolTaskControl:
+        if status not in CONTROL_STATUSES:
+            raise ControlValidationError("Неизвестный статус контроля")
+        comment = comment.strip() if comment else None
+        if status in {"completed", "rejected"} and not comment:
+            raise ControlValidationError("Для завершения или отклонения обязателен комментарий")
+        control = task.control or ProtocolTaskControl(
+            protocol_task=task, planned_date=task.deadline
+        )
+        control.status = status
+        control.result_comment = comment
+        control.actual_date = actual_date
+        task.status = status  # compatibility with the earlier execution-history UI
+        self.db.add(control)
+        self._complete_protocol_if_ready(task.protocol)
+        self.db.commit()
+        self.db.refresh(control)
+        return control
+
+    def _complete_protocol_if_ready(self, protocol: Protocol) -> None:
+        tasks = list(protocol.tasks)
+        if tasks and all(task.control and task.control.status == "completed" for task in tasks):
+            protocol.status = "completed"
+        elif protocol.status == "published":
+            protocol.status = "control"
+
     @staticmethod
     def progress(tasks: list[ProtocolTask]) -> ProtocolProgress:
         total = len(tasks)
-        completed = sum(task.status == "completed" for task in tasks)
-        overdue = sum(task.status == "overdue" for task in tasks)
-        active = sum(task.status in {"in_progress", "waiting_control"} for task in tasks)
+        statuses = [task.control.status if task.control else task.status for task in tasks]
+        completed = statuses.count("completed")
+        overdue = statuses.count("overdue")
+        active = sum(status in {"in_progress", "waiting_control"} for status in statuses)
         return ProtocolProgress(total, completed, active, overdue, int(completed * 100 / total) if total else 0)
+
+
+class OverdueChecker:
+    """Marks non-completed controls whose planned deadline has passed."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def check(self, tasks: list[ProtocolTask], today: date | None = None) -> int:
+        today = today or date.today()
+        changed = 0
+        for task in tasks:
+            control = task.control
+            deadline = control.planned_date if control else task.deadline
+            if deadline and deadline < today and (not control or control.status != "completed"):
+                if control is None:
+                    control = ProtocolTaskControl(protocol_task=task, planned_date=deadline)
+                if control.status != "overdue":
+                    control.status = "overdue"
+                    task.status = "overdue"
+                    self.db.add(control)
+                    changed += 1
+        if changed:
+            self.db.commit()
+        return changed
 
 
 def days_remaining(task: ProtocolTask, today: date | None = None) -> int | None:
