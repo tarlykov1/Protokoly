@@ -19,6 +19,10 @@ class PlannedTask:
     task_type: str
     external_key: str
     parent_external_key: str | None = None
+    original_assignee: str | None = None
+    assignee_match_result: str = "not_found"
+    missing_bitrix_id_reason: str | None = None
+    assignee_raw: str | None = None
 
 
 @dataclass

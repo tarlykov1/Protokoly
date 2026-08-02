@@ -115,3 +115,33 @@ def test_editor_integration_workflow():
     assert blocked.status_code == 303
     assert blocked.headers["location"].endswith("/editor?filter=errors")
     teardown_protocol()
+
+
+def test_editor_layout_and_validation_reason_are_rendered():
+    teardown_protocol()
+    protocol_id, _, _ = make_protocol()
+    client = TestClient(app)
+
+    page = client.get(f"/protocols/{protocol_id}/editor")
+
+    assert page.status_code == 200
+    assert 'id="publish-editor" class="btn btn-primary disabled"' not in page.text
+    css = client.get("/static/css/app.css").text
+    assert "table-layout:fixed" in css
+    assert ".protocol-editor-table td{height:112px" in css
+    assert ".protocol-editor-table th:nth-child(3){width:40%}" in css
+    publication_plan = client.get(f"/protocols/{protocol_id}/publication-plan")
+    assert (
+        "Исполнитель не сопоставлен с пользователем Битрикс24, "
+        "будет создана задача без назначения" in publication_plan.text
+    )
+
+    with SessionLocal() as db:
+        task = db.get(Protocol, protocol_id).tasks[0]
+        task.title = ""
+        db.commit()
+    invalid_page = client.get(f"/protocols/{protocol_id}/editor")
+    assert 'id="publish-editor" class="btn btn-primary disabled"' in invalid_page.text
+    assert "Исправьте ошибки в 1 поручениях" in invalid_page.text
+    assert 'aria-disabled="true"' in invalid_page.text
+    teardown_protocol()

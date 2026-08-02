@@ -35,17 +35,29 @@ class TaskPlanningService:
 
     def _unique_assignments(self, task: ProtocolTask, plan: TaskCreationPlan):
         unique = []
-        seen: set[int] = set()
+        seen: set[tuple[str, int | str]] = set()
         for assignment in sorted(task.assignments, key=lambda item: item.sort_order):
             if assignment.employee is None or assignment.employee_id is None:
-                plan.errors.append(PlanningIssue("employee_required", "Assignment must reference an employee."))
+                raw_name = (assignment.individual_title or "").strip()
+                if not raw_name:
+                    plan.errors.append(PlanningIssue("employee_required", "Assignment must identify an assignee."))
+                    continue
+                key = ("raw", raw_name.casefold())
+                if key in seen:
+                    continue
+                seen.add(key)
+                plan.warnings.append(self._unmatched_warning(raw_name, "Сотрудник не найден"))
+                unique.append(assignment)
                 continue
-            if assignment.employee_id in seen:
+            key = ("employee", assignment.employee_id)
+            if key in seen:
                 plan.warnings.append(PlanningIssue("duplicate_employee", f"Duplicate employee skipped: {assignment.employee.full_name}.", False))
                 continue
-            seen.add(assignment.employee_id)
+            seen.add(key)
             if not assignment.employee.bitrix_user_id:
-                plan.errors.append(PlanningIssue("employee_bitrix_id_required", f"Employee has no Bitrix ID: {assignment.employee.full_name}."))
+                plan.warnings.append(
+                    self._unmatched_warning(assignment.employee.full_name, "У сотрудника отсутствует bitrix_id")
+                )
             unique.append(assignment)
         if not unique:
             plan.errors.append(PlanningIssue("assignments_required", "At least one assignee is required."))
@@ -53,13 +65,36 @@ class TaskPlanningService:
 
     def _assignment_task(self, task, assignment, index: int, task_type: str, parent_key: str | None) -> PlannedTask:
         number = f"{task.number}/{index:02d}"
+        employee = assignment.employee
+        original_assignee = employee.full_name if employee else (assignment.individual_title or "").strip()
+        responsible_id = employee.bitrix_user_id if employee else None
+        match_result = "matched" if employee else "not_found"
+        missing_reason = None
+        if employee and not responsible_id:
+            match_result = "matched_without_bitrix_id"
+            missing_reason = "У сотрудника отсутствует bitrix_id"
+        elif not employee:
+            missing_reason = "Сотрудник не найден"
         return PlannedTask(
             number=number,
-            title=assignment.individual_title or task.title,
-            responsible_id=assignment.employee.bitrix_user_id,
-            responsible_name=assignment.employee.full_name,
+            title=task.title if not employee else (assignment.individual_title or task.title),
+            responsible_id=responsible_id,
+            responsible_name=original_assignee,
             deadline=assignment.individual_deadline or task.deadline,
             task_type=task_type,
             external_key=f"protocol-task:{task.id}:assignment:{assignment.id}:{task_type}",
             parent_external_key=parent_key,
+            original_assignee=original_assignee,
+            assignee_match_result=match_result,
+            missing_bitrix_id_reason=missing_reason,
+            assignee_raw=original_assignee if responsible_id is None else None,
+        )
+
+    @staticmethod
+    def _unmatched_warning(name: str, reason: str) -> PlanningIssue:
+        return PlanningIssue(
+            "assignee_not_mapped",
+            "Исполнитель не сопоставлен с пользователем Битрикс24, "
+            f"будет создана задача без назначения: {name} ({reason}).",
+            False,
         )

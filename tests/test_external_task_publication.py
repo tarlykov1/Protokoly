@@ -67,6 +67,44 @@ def test_approved_protocol_is_published_once(publication_db):
     assert second.reused is True
     assert db.scalars(select(ProtocolTaskLink)).all() == first.links
     assert gateway.get_status("TASK-10001") == "created"
+    created = gateway.get_task("TASK-10001")
+    assert created["responsible_id"] == 20
+    assert created["original_assignee"] == "Прокофьев Д.Ю."
+    assert created["assignee_match_result"] == "matched"
+    assert created["assignee_raw"] is None
+
+
+def test_approved_protocol_is_published_without_employee_bitrix_id(publication_db):
+    db, protocol, task = publication_db
+    task.assignments[0].employee.bitrix_user_id = None
+    db.commit()
+    gateway = FakeTaskGateway()
+
+    result = PublicationService(db, gateway).publish(protocol)
+
+    assert result.created_count == 1
+    created = gateway.get_task("TASK-10001")
+    assert created["responsible_id"] is None
+    assert created["assignee_raw"] == "Прокофьев Д.Ю."
+    assert created["original_assignee"] == "Прокофьев Д.Ю."
+    assert created["assignee_match_result"] == "matched_without_bitrix_id"
+    assert created["missing_bitrix_id_reason"] == "У сотрудника отсутствует bitrix_id"
+
+
+def test_unmatched_text_assignee_is_published(publication_db):
+    db, protocol, task = publication_db
+    task.assignments.clear()
+    task.assignments.append(ProtocolTaskAssignment(individual_title="Внешний исполнитель"))
+    db.commit()
+    gateway = FakeTaskGateway()
+
+    PublicationService(db, gateway).publish(protocol)
+
+    created = gateway.get_task("TASK-10001")
+    assert created["responsible_id"] is None
+    assert created["assignee_raw"] == "Внешний исполнитель"
+    assert created["assignee_match_result"] == "not_found"
+    assert created["missing_bitrix_id_reason"] == "Сотрудник не найден"
 
 
 @pytest.mark.parametrize("status", ["draft", "review"])
