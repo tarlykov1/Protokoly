@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero mb-4">
+  <h1>Интеграции</h1><p class="muted">Настройка подключения к Bitrix24 REST API.</p>
+  {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/settings/integrations/bitrix24" class="row g-3">
+    <div class="col-12 form-check ms-2"><input class="form-check-input" type="checkbox" name="enabled" value="true" id="enabled" {% if settings.enabled %}checked{% endif %}><label class="form-check-label" for="enabled">Интеграция включена</label></div>
+    <div class="col-md-4"><label class="form-label" for="mode">Режим</label><select class="form-select" id="mode" name="mode"><option value="fake" {% if settings.mode == 'fake' %}selected{% endif %}>fake — без сетевых запросов</option><option value="rest" {% if settings.mode == 'rest' %}selected{% endif %}>rest — Bitrix24 API</option></select></div>
+    <div class="col-md-8"><label class="form-label" for="portal_url">Адрес портала</label><input class="form-control" id="portal_url" name="portal_url" type="url" placeholder="https://company.bitrix24.ru" value="{{ settings.portal_url or '' }}"></div>
+    <div class="col-12"><label class="form-label" for="webhook_url">Webhook URL</label><input class="form-control" id="webhook_url" name="webhook_url" type="url" placeholder="https://company.bitrix24.ru/rest/1/token" value="{{ settings.webhook_url or '' }}"><div class="form-text">Можно указать готовый URL вебхука либо пользователя и токен ниже.</div></div>
+    <div class="col-md-4"><label class="form-label" for="user_id">Пользователь</label><input class="form-control" id="user_id" name="user_id" value="{{ settings.user_id or '' }}"></div>
+    <div class="col-md-8"><label class="form-label" for="token">Токен</label><input class="form-control" id="token" name="token" type="password" autocomplete="new-password" placeholder="Оставьте пустым, чтобы не менять"></div>
+    <div class="col-12"><button class="btn btn-primary" type="submit">Сохранить настройки</button></div>
+  </form>
+  <form method="post" action="/settings/integrations/bitrix24/check" class="mt-3"><button class="btn btn-outline-primary" type="submit">Проверить соединение (user.current)</button></form>
+</section>
+<section class="panel p-4"><h2 class="h4">Журнал интеграции</h2>{% if logs %}<div class="table-responsive"><table class="table"><thead><tr><th>Дата</th><th>Операция</th><th>Статус</th><th>Ответ</th></tr></thead><tbody>{% for log in logs %}<tr><td>{{ log.created_at }}</td><td><code>{{ log.operation }}</code></td><td>{{ log.status }}</td><td><pre class="small mb-0">{{ log.response }}</pre></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted mb-0">Вызовов API пока нет.</p>{% endif %}</section>
+{% endblock %}

@@ -24,6 +24,32 @@ class TimestampMixin:
     )
 
 
+class IntegrationSettings(TimestampMixin, Base):
+    """Administrator-managed configuration for an external integration."""
+
+    __tablename__ = "integration_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str] = mapped_column(String(64), unique=True, default="bitrix24")
+    enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
+    mode: Mapped[str] = mapped_column(String(16), default="fake")
+    portal_url: Mapped[str | None] = mapped_column(String(1000))
+    webhook_url: Mapped[str | None] = mapped_column(String(1000))
+    user_id: Mapped[str | None] = mapped_column(String(64))
+    encrypted_token: Mapped[str | None] = mapped_column(Text())
+
+
+class IntegrationLog(Base):
+    """Audit trail of calls made to an integration (secrets are redacted by the gateway)."""
+
+    __tablename__ = "integration_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operation: Mapped[str] = mapped_column(String(128), index=True)
+    request: Mapped[dict | None] = mapped_column(JSON())
+    response: Mapped[dict | None] = mapped_column(JSON())
+    status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Project(TimestampMixin, Base):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(primary_key=True)

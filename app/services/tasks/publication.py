@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models.domain import Protocol, ProtocolTaskControl, ProtocolTaskLink
+from app.db.models.domain import Employee, Protocol, ProtocolTaskControl, ProtocolTaskLink
 from app.services.demo_publication import protocol_plan
 from app.services.tasks.gateway import TaskGateway
 
@@ -17,6 +17,7 @@ class PublicationNotAllowedError(ValueError):
 class PublicationResult:
     links: list[ProtocolTaskLink]
     reused: bool = False
+    warnings: tuple[str, ...] = ()
 
     @property
     def created_count(self) -> int:
@@ -42,11 +43,28 @@ class PublicationService:
             raise PublicationNotAllowedError("; ".join(errors))
 
         links = []
+        warnings: list[str] = []
         for protocol_task, planned in rows:
+            responsible_id = planned.responsible_id
+            if responsible_id is None and planned.original_assignee:
+                user = self.gateway.get_user(planned.original_assignee)
+                if user:
+                    responsible_id = int(user.get("ID") or user.get("id"))
+                    employee = self.db.scalar(
+                        select(Employee).where(Employee.full_name == planned.original_assignee)
+                    )
+                    if employee:
+                        employee.bitrix_user_id = responsible_id
+                        employee.is_available_in_bitrix = True
+                else:
+                    warnings.append(
+                        f"Исполнитель «{planned.original_assignee}» не найден в Bitrix24; "
+                        "задача создана без назначения."
+                    )
             external = self.gateway.create_task(
                 {
                     "title": planned.title,
-                    "responsible_id": planned.responsible_id,
+                    "responsible_id": responsible_id,
                     "deadline": str(planned.deadline) if planned.deadline else None,
                     "parent_external_key": planned.parent_external_key,
                     "assignee_raw": planned.assignee_raw,
@@ -77,7 +95,7 @@ class PublicationService:
         self.db.commit()
         for link in links:
             self.db.refresh(link)
-        return PublicationResult(links)
+        return PublicationResult(links, warnings=tuple(warnings))
 
     def _links(self, protocol: Protocol) -> list[ProtocolTaskLink]:
         task_ids = [task.id for task in protocol.tasks]
