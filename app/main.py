@@ -49,7 +49,12 @@ def readiness_percent(protocol):
         score += 1 if task.title else 0
         score += 1 if task.assignments else 0
         score += 1 if task.deadline else 0
-        score += 1 if task.validation_status in {"ready", "validated", "done"} or protocol.status == "ready" else 0
+        score += (
+            1
+            if task.validation_status in {"ready", "validated", "done"}
+            or protocol.status == "ready"
+            else 0
+        )
         score += 1 if protocol.status not in {"validation_required", "error"} else 0
         ready += score / 5
     return int(100 * ready / len(tasks))
@@ -136,13 +141,17 @@ def projects(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "projects.html",
-        common_context("Проекты", "Проекты", projects=db.scalars(select(Project).order_by(Project.name)).all()),
+        common_context(
+            "Проекты", "Проекты", projects=db.scalars(select(Project).order_by(Project.name)).all()
+        ),
     )
 
 
 @app.get("/projects/new")
 def new_project(request: Request):
-    return templates.TemplateResponse(request, "project_form.html", common_context("Проекты", "Новый проект"))
+    return templates.TemplateResponse(
+        request, "project_form.html", common_context("Проекты", "Новый проект")
+    )
 
 
 @app.post("/projects")
@@ -205,8 +214,57 @@ def import_form(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "import_form.html",
-        common_context("Проекты", "Проекты", projects=db.scalars(select(Project).order_by(Project.name)).all()),
+        common_context(
+            "Проекты", "Проекты", projects=db.scalars(select(Project).order_by(Project.name)).all()
+        ),
     )
+
+
+@app.get("/protocols/new")
+def new_protocol(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request,
+        "protocol_form.html",
+        common_context(
+            "Протоколы",
+            "Новый протокол",
+            projects=db.scalars(
+                select(Project).where(Project.is_active.is_(True)).order_by(Project.name)
+            ).all(),
+        ),
+    )
+
+
+@app.post("/protocols")
+def create_protocol(
+    project_id: int = Form(...),
+    number: str = Form(...),
+    title: str = Form(...),
+    meeting_date: date = Form(...),
+    initiator: str = Form(...),
+    responsible: str = Form(...),
+    participants: str = Form(""),
+    description: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    if not db.get(Project, project_id):
+        raise HTTPException(status_code=422, detail="Проект не найден")
+    protocol = Protocol(
+        project_id=project_id,
+        number=number.strip(),
+        title=title.strip(),
+        meeting_date=meeting_date,
+        initiator=initiator.strip(),
+        responsible=responsible.strip(),
+        participants=participants.strip() or None,
+        description=description.strip() or None,
+        status="draft",
+        source_type="manual",
+    )
+    db.add(protocol)
+    db.commit()
+    db.refresh(protocol)
+    return RedirectResponse(f"/protocols/{protocol.id}?created=1", status_code=303)
 
 
 @app.post("/protocols/import/preview")
@@ -228,7 +286,13 @@ def import_session_preview(
     return templates.TemplateResponse(
         request,
         "import_preview.html",
-        common_context("Импорт", "Предпросмотр", session=session, payload=session.parsed_payload if session else {}, filter=filter),
+        common_context(
+            "Импорт",
+            "Предпросмотр",
+            session=session,
+            payload=session.parsed_payload if session else {},
+            filter=filter,
+        ),
     )
 
 
@@ -282,7 +346,12 @@ def import_sessions(
     return templates.TemplateResponse(
         request,
         "import_sessions.html",
-        common_context("Импорт", "Журнал импорта", sessions=db.scalars(stmt).all(), projects=db.scalars(select(Project)).all()),
+        common_context(
+            "Импорт",
+            "Журнал импорта",
+            sessions=db.scalars(stmt).all(),
+            projects=db.scalars(select(Project)).all(),
+        ),
     )
 
 
@@ -347,7 +416,9 @@ def require_demo_mode():
 @app.get("/demo")
 def demo_wizard(request: Request, db: Session = Depends(get_db)):
     ctx = demo_context(db)
-    return templates.TemplateResponse(request, "demo.html", ctx | {"message": request.query_params.get("message")})
+    return templates.TemplateResponse(
+        request, "demo.html", ctx | {"message": request.query_params.get("message")}
+    )
 
 
 @app.post("/demo/seed")
@@ -394,7 +465,9 @@ def demo_guided(request: Request, db: Session = Depends(get_db), step: int = 1):
 @app.get("/demo/complete")
 def demo_complete(request: Request, db: Session = Depends(get_db)):
     ctx = demo_context(db)
-    runs = db.scalars(select(PublicationRun).order_by(PublicationRun.started_at.desc()).limit(1)).all()
+    runs = db.scalars(
+        select(PublicationRun).order_by(PublicationRun.started_at.desc()).limit(1)
+    ).all()
     created = sum(run.successful_items for run in runs) if runs else 0
     return templates.TemplateResponse(request, "demo_complete.html", ctx | {"created": created})
 
@@ -414,11 +487,25 @@ def demo_dashboard(request: Request, db: Session = Depends(get_db)):
             "projects_count": db.scalar(select(func.count()).select_from(Project)) or 0,
             "protocols_count": db.scalar(select(func.count()).select_from(Protocol)) or 0,
             "tasks_count": db.scalar(select(func.count()).select_from(ProtocolTask)) or 0,
-            "ready_count": db.scalar(select(func.count()).select_from(ProtocolTask).where(ProtocolTask.deadline.is_not(None))) or 0,
-            "review_count": db.scalar(select(func.count()).select_from(ProtocolTask).where(ProtocolTask.deadline.is_(None))) or 0,
+            "ready_count": db.scalar(
+                select(func.count())
+                .select_from(ProtocolTask)
+                .where(ProtocolTask.deadline.is_not(None))
+            )
+            or 0,
+            "review_count": db.scalar(
+                select(func.count())
+                .select_from(ProtocolTask)
+                .where(ProtocolTask.deadline.is_(None))
+            )
+            or 0,
             "publication_count": db.scalar(select(func.count()).select_from(PublicationRun)) or 0,
-            "imports": db.scalars(select(ImportSession).order_by(ImportSession.created_at.desc()).limit(5)).all(),
-            "problem_tasks": db.scalars(select(ProtocolTask).where(ProtocolTask.deadline.is_(None)).limit(5)).all(),
+            "imports": db.scalars(
+                select(ImportSession).order_by(ImportSession.created_at.desc()).limit(5)
+            ).all(),
+            "problem_tasks": db.scalars(
+                select(ProtocolTask).where(ProtocolTask.deadline.is_(None)).limit(5)
+            ).all(),
             **demo_context(db),
         },
     )
@@ -427,6 +514,8 @@ def demo_dashboard(request: Request, db: Session = Depends(get_db)):
 @app.get("/protocols/{protocol_id}")
 def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.get(Protocol, protocol_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
     sections = db.scalars(
         select(ProtocolSection)
         .where(ProtocolSection.protocol_id == protocol_id)
@@ -467,8 +556,29 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
             "without_assignee": without_assignee,
             "without_deadline": without_deadline,
             "control_progress": ProtocolControlService.progress(list(p.tasks)),
+            "created": request.query_params.get("created") == "1",
         },
     )
+
+
+@app.post("/protocols/{protocol_id}/workflow")
+def change_protocol_workflow(
+    protocol_id: int, action: str = Form(...), db: Session = Depends(get_db)
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    transitions = {
+        ("draft", "submit_review"): "review",
+        ("review", "approve"): "approved",
+        ("review", "return_draft"): "draft",
+    }
+    new_status = transitions.get((protocol.status, action))
+    if not new_status:
+        raise HTTPException(status_code=409, detail="Недопустимый переход статуса")
+    protocol.status = new_status
+    db.commit()
+    return RedirectResponse(f"/protocols/{protocol_id}", status_code=303)
 
 
 @app.get("/protocols/{protocol_id}/control")
@@ -587,7 +697,10 @@ def protocol_editor(
         .where(ProtocolSection.protocol_id == protocol_id)
         .order_by(ProtocolSection.sort_order, ProtocolSection.id)
     ).all()
-    rows = [(task, editor_errors(task)) for task in protocol.tasks]
+    rows = [
+        (task, editor_errors(task))
+        for task in sorted(protocol.tasks, key=lambda item: (item.position, item.id))
+    ]
     filters = {
         "errors": lambda row: bool(row[1]),
         "without_assignee": lambda row: not row[0].assignments,
@@ -622,9 +735,12 @@ def save_protocol_editor(
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     tasks = {task.id: task for task in protocol.tasks}
-    sections = {section.id: section for section in db.scalars(
-        select(ProtocolSection).where(ProtocolSection.protocol_id == protocol_id)
-    ).all()}
+    sections = {
+        section.id: section
+        for section in db.scalars(
+            select(ProtocolSection).where(ProtocolSection.protocol_id == protocol_id)
+        ).all()
+    }
     for section_data in payload.get("sections", []):
         section = sections.get(int(section_data["id"]))
         if section:
@@ -633,12 +749,16 @@ def save_protocol_editor(
         task = tasks.get(int(task_data["id"]))
         if task:
             apply_task_data(db, task, task_data)
+            if "position" in task_data:
+                task.position = int(task_data["position"])
     db.commit()
     return {"saved": True}
 
 
 @app.post("/protocols/{protocol_id}/editor/tasks")
-def add_editor_task(protocol_id: int, payload: dict = Body(default={}), db: Session = Depends(get_db)):
+def add_editor_task(
+    protocol_id: int, payload: dict = Body(default={}), db: Session = Depends(get_db)
+):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
@@ -652,14 +772,21 @@ def duplicate_editor_task(protocol_id: int, task_id: int, db: Session = Depends(
     source = db.get(ProtocolTask, task_id)
     if not source or source.protocol_id != protocol_id:
         raise HTTPException(status_code=404, detail="Поручение не найдено")
-    duplicate = create_editor_task(db, source.protocol, {
-        "number": f"{source.number} копия", "title": source.title,
-        "description": source.description, "deadline": str(source.deadline or ""),
-        "section_id": source.section_id, "priority": source.priority,
-        "create_as_subtasks": source.create_as_subtasks,
-        "is_controlled": source.is_controlled,
-        "employee_ids": [a.employee_id for a in source.assignments if a.employee_id],
-    })
+    duplicate = create_editor_task(
+        db,
+        source.protocol,
+        {
+            "number": f"{source.number} копия",
+            "title": source.title,
+            "description": source.description,
+            "deadline": str(source.deadline or ""),
+            "section_id": source.section_id,
+            "priority": source.priority,
+            "create_as_subtasks": source.create_as_subtasks,
+            "is_controlled": source.is_controlled,
+            "employee_ids": [a.employee_id for a in source.assignments if a.employee_id],
+        },
+    )
     db.commit()
     return {"id": duplicate.id}
 
@@ -678,9 +805,14 @@ def delete_editor_task(protocol_id: int, task_id: int, db: Session = Depends(get
 def add_editor_section(protocol_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
     if not db.get(Protocol, protocol_id):
         raise HTTPException(status_code=404, detail="Протокол не найден")
-    order = db.scalar(select(func.max(ProtocolSection.sort_order)).where(
-        ProtocolSection.protocol_id == protocol_id
-    )) or 0
+    order = (
+        db.scalar(
+            select(func.max(ProtocolSection.sort_order)).where(
+                ProtocolSection.protocol_id == protocol_id
+            )
+        )
+        or 0
+    )
     section = ProtocolSection(
         protocol_id=protocol_id, title=payload.get("title", "Новый раздел"), sort_order=order + 1
     )
@@ -693,14 +825,19 @@ def add_editor_section(protocol_id: int, payload: dict = Body(...), db: Session 
 def bulk_edit_tasks(protocol_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
     ids = {int(value) for value in payload.get("task_ids", [])}
     changes = payload.get("changes", {})
-    tasks = db.scalars(select(ProtocolTask).where(
-        ProtocolTask.protocol_id == protocol_id, ProtocolTask.id.in_(ids or {0})
-    )).all()
+    tasks = db.scalars(
+        select(ProtocolTask).where(
+            ProtocolTask.protocol_id == protocol_id, ProtocolTask.id.in_(ids or {0})
+        )
+    ).all()
     for task in tasks:
         data = dict(changes)
         if "employee_id" in data:
             employee_id = data.pop("employee_id")
-            data["employee_ids"] = [*(a.employee_id for a in task.assignments if a.employee_id), employee_id]
+            data["employee_ids"] = [
+                *(a.employee_id for a in task.assignments if a.employee_id),
+                employee_id,
+            ]
         apply_task_data(db, task, data)
     db.commit()
     return {"updated": len(tasks)}
@@ -708,9 +845,12 @@ def bulk_edit_tasks(protocol_id: int, payload: dict = Body(...), db: Session = D
 
 @app.get("/employees/search")
 def employee_search(q: str = "", db: Session = Depends(get_db)):
-    employees = db.scalars(select(Employee).where(
-        Employee.is_active.is_(True), Employee.full_name.ilike(f"%{q.strip()}%")
-    ).order_by(Employee.full_name).limit(20)).all()
+    employees = db.scalars(
+        select(Employee)
+        .where(Employee.is_active.is_(True), Employee.full_name.ilike(f"%{q.strip()}%"))
+        .order_by(Employee.full_name)
+        .limit(20)
+    ).all()
     return [{"id": employee.id, "full_name": employee.full_name} for employee in employees]
 
 
@@ -764,11 +904,14 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
         assignee_counts[planned.responsible_name] = (
             assignee_counts.get(planned.responsible_name, 0) + 1
         )
-    section_count = db.scalar(
-        select(func.count()).select_from(ProtocolSection).where(
-            ProtocolSection.protocol_id == protocol_id
+    section_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(ProtocolSection)
+            .where(ProtocolSection.protocol_id == protocol_id)
         )
-    ) or 0
+        or 0
+    )
     return templates.TemplateResponse(
         request,
         "publication_plan.html",
@@ -913,7 +1056,10 @@ def employee_lists(request: Request, db: Session = Depends(get_db)):
         {
             "title": "Списки сотрудников",
             "items": [
-                employee_list.name for employee_list in db.scalars(select(EmployeeList).order_by(EmployeeList.name)).all()
+                employee_list.name
+                for employee_list in db.scalars(
+                    select(EmployeeList).order_by(EmployeeList.name)
+                ).all()
             ],
         },
     )
