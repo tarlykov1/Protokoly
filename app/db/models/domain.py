@@ -151,6 +151,7 @@ class ProtocolTask(TimestampMixin, Base):
     deadline: Mapped[date | None] = mapped_column(Date())
     priority: Mapped[str | None] = mapped_column(String(32))
     create_as_subtasks: Mapped[bool] = mapped_column(Boolean(), default=False)
+    is_controlled: Mapped[bool] = mapped_column(Boolean(), default=False)
     status: Mapped[str] = mapped_column(String(32), default="draft")
     original_text: Mapped[str | None] = mapped_column(Text())
     source_page: Mapped[int | None] = mapped_column(Integer())
@@ -158,7 +159,7 @@ class ProtocolTask(TimestampMixin, Base):
     source_table: Mapped[int | None] = mapped_column(Integer())
     protocol: Mapped[Protocol] = relationship(back_populates="tasks")
     assignments: Mapped[list["ProtocolTaskAssignment"]] = relationship(
-        back_populates="protocol_task"
+        back_populates="protocol_task", cascade="all, delete-orphan"
     )
     bitrix_links: Mapped[list["BitrixTaskLink"]] = relationship(back_populates="protocol_task")
 

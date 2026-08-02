@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -12,6 +12,14 @@ from app.services.imports.service import (
     create_preview_session,
     reparse_session,
     update_session_payload,
+)
+from app.services.protocols.editor import (
+    apply_task_data,
+    editor_errors,
+    match_source_name,
+)
+from app.services.protocols.editor import (
+    create_task as create_editor_task,
 )
 
 app = FastAPI(title="Protocol Management System")
@@ -463,6 +471,173 @@ def validate_all(protocol_id: int, db: Session = Depends(get_db)):
         "warnings": warnings,
         "ready_to_publish": errors == 0,
     }
+
+
+@app.get("/protocols/{protocol_id}/editor")
+def protocol_editor(
+    protocol_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    filter: str = "all",
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    sections = db.scalars(
+        select(ProtocolSection)
+        .where(ProtocolSection.protocol_id == protocol_id)
+        .order_by(ProtocolSection.sort_order, ProtocolSection.id)
+    ).all()
+    rows = [(task, editor_errors(task)) for task in protocol.tasks]
+    filters = {
+        "errors": lambda row: bool(row[1]),
+        "without_assignee": lambda row: not row[0].assignments,
+        "without_deadline": lambda row: not row[0].deadline,
+        "ready": lambda row: not row[1],
+    }
+    if filter in filters:
+        rows = [row for row in rows if filters[filter](row)]
+    return templates.TemplateResponse(
+        request,
+        "protocol_editor.html",
+        common_context(
+            "Протоколы",
+            "Редактор протокола",
+            protocol=protocol,
+            sections=sections,
+            rows=rows,
+            employees=db.scalars(
+                select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.full_name)
+            ).all(),
+            current_filter=filter,
+            error_count=sum(bool(editor_errors(task)) for task in protocol.tasks),
+        ),
+    )
+
+
+@app.post("/protocols/{protocol_id}/editor/save")
+def save_protocol_editor(
+    protocol_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    tasks = {task.id: task for task in protocol.tasks}
+    sections = {section.id: section for section in db.scalars(
+        select(ProtocolSection).where(ProtocolSection.protocol_id == protocol_id)
+    ).all()}
+    for section_data in payload.get("sections", []):
+        section = sections.get(int(section_data["id"]))
+        if section:
+            section.title = section_data["title"].strip() or section.title
+    for task_data in payload.get("tasks", []):
+        task = tasks.get(int(task_data["id"]))
+        if task:
+            apply_task_data(db, task, task_data)
+    db.commit()
+    return {"saved": True}
+
+
+@app.post("/protocols/{protocol_id}/editor/tasks")
+def add_editor_task(protocol_id: int, payload: dict = Body(default={}), db: Session = Depends(get_db)):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    task = create_editor_task(db, protocol, payload)
+    db.commit()
+    return {"id": task.id}
+
+
+@app.post("/protocols/{protocol_id}/editor/tasks/{task_id}/duplicate")
+def duplicate_editor_task(protocol_id: int, task_id: int, db: Session = Depends(get_db)):
+    source = db.get(ProtocolTask, task_id)
+    if not source or source.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Поручение не найдено")
+    duplicate = create_editor_task(db, source.protocol, {
+        "number": f"{source.number} копия", "title": source.title,
+        "description": source.description, "deadline": str(source.deadline or ""),
+        "section_id": source.section_id, "priority": source.priority,
+        "create_as_subtasks": source.create_as_subtasks,
+        "is_controlled": source.is_controlled,
+        "employee_ids": [a.employee_id for a in source.assignments if a.employee_id],
+    })
+    db.commit()
+    return {"id": duplicate.id}
+
+
+@app.delete("/protocols/{protocol_id}/editor/tasks/{task_id}")
+def delete_editor_task(protocol_id: int, task_id: int, db: Session = Depends(get_db)):
+    task = db.get(ProtocolTask, task_id)
+    if not task or task.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Поручение не найдено")
+    db.delete(task)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.post("/protocols/{protocol_id}/editor/sections")
+def add_editor_section(protocol_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    if not db.get(Protocol, protocol_id):
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    order = db.scalar(select(func.max(ProtocolSection.sort_order)).where(
+        ProtocolSection.protocol_id == protocol_id
+    )) or 0
+    section = ProtocolSection(
+        protocol_id=protocol_id, title=payload.get("title", "Новый раздел"), sort_order=order + 1
+    )
+    db.add(section)
+    db.commit()
+    return {"id": section.id}
+
+
+@app.post("/protocols/{protocol_id}/editor/bulk")
+def bulk_edit_tasks(protocol_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    ids = {int(value) for value in payload.get("task_ids", [])}
+    changes = payload.get("changes", {})
+    tasks = db.scalars(select(ProtocolTask).where(
+        ProtocolTask.protocol_id == protocol_id, ProtocolTask.id.in_(ids or {0})
+    )).all()
+    for task in tasks:
+        data = dict(changes)
+        if "employee_id" in data:
+            employee_id = data.pop("employee_id")
+            data["employee_ids"] = [*(a.employee_id for a in task.assignments if a.employee_id), employee_id]
+        apply_task_data(db, task, data)
+    db.commit()
+    return {"updated": len(tasks)}
+
+
+@app.get("/employees/search")
+def employee_search(q: str = "", db: Session = Depends(get_db)):
+    employees = db.scalars(select(Employee).where(
+        Employee.is_active.is_(True), Employee.full_name.ilike(f"%{q.strip()}%")
+    ).order_by(Employee.full_name).limit(20)).all()
+    return [{"id": employee.id, "full_name": employee.full_name} for employee in employees]
+
+
+@app.post("/protocols/{protocol_id}/editor/tasks/{task_id}/match-assignee")
+def match_editor_assignee(
+    protocol_id: int, task_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+):
+    task = db.get(ProtocolTask, task_id)
+    if not task or task.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Поручение не найдено")
+    try:
+        match_source_name(db, task, payload["source_name"], int(payload["employee_id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    db.commit()
+    return {"matched": True}
+
+
+@app.get("/protocols/{protocol_id}/editor/publication")
+def editor_publication(protocol_id: int, db: Session = Depends(get_db)):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    if any(editor_errors(task) for task in protocol.tasks):
+        return RedirectResponse(f"/protocols/{protocol_id}/editor?filter=errors", status_code=303)
+    return RedirectResponse(f"/protocols/{protocol_id}/publication-plan", status_code=303)
 
 
 @app.post("/protocols/{protocol_id}/assess-all")
