@@ -21,5 +21,6 @@ def test_alembic_revisions_form_single_ordered_chain():
         "0007_add_execution_control",
         "0008_add_protocol_task_controls",
         "0009_protocol_user_workflow",
+        "0010_add_integration_settings",
     ]
     assert len(scripts.get_heads()) == 1

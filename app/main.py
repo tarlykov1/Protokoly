@@ -364,6 +364,8 @@ from app.core.config import get_settings
 from app.db.models.domain import (
     Employee,
     EmployeeList,
+    IntegrationLog,
+    IntegrationSettings,
     ProtocolSection,
     ProtocolTaskAssignment,
     ProtocolTaskLink,
@@ -377,7 +379,7 @@ from app.services.demo_publication import (
     save_assessment,
     validate_task,
 )
-from app.services.tasks.gateway import FakeTaskGateway
+from app.services.tasks.gateway import Bitrix24RestGateway, BitrixAPIError, get_bitrix_gateway
 from app.services.tasks.publication import PublicationNotAllowedError, PublicationService
 
 
@@ -933,13 +935,83 @@ def publish_protocol(protocol_id: int, db: Session = Depends(get_db)):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
-    existing_count = db.scalar(select(func.count()).select_from(ProtocolTaskLink)) or 0
-    service = PublicationService(db, FakeTaskGateway(start_at=10001 + existing_count))
+    service = PublicationService(db, get_bitrix_gateway(db))
     try:
-        service.publish(protocol)
+        result = service.publish(protocol)
     except PublicationNotAllowedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return RedirectResponse(f"/protocols/{protocol_id}/publication-plan", status_code=303)
+    except BitrixAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"Ошибка Bitrix24: {exc}") from exc
+    suffix = "?message=" + result.warnings[0] if result.warnings else ""
+    return RedirectResponse(f"/protocols/{protocol_id}/publication-plan{suffix}", status_code=303)
+
+
+def _bitrix_settings(db: Session) -> IntegrationSettings:
+    settings = db.scalar(select(IntegrationSettings).where(IntegrationSettings.type == "bitrix24"))
+    if settings is None:
+        settings = IntegrationSettings(type="bitrix24", enabled=True, mode="fake")
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+@app.get("/settings/integrations")
+def integration_settings_page(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request,
+        "integration_settings.html",
+        common_context(
+            "Интеграции",
+            "Настройки / Интеграции",
+            settings=_bitrix_settings(db),
+            logs=db.scalars(
+                select(IntegrationLog).order_by(IntegrationLog.id.desc()).limit(20)
+            ).all(),
+            message=request.query_params.get("message"),
+            error=request.query_params.get("error"),
+        ),
+    )
+
+
+@app.post("/settings/integrations/bitrix24")
+def save_bitrix_settings(
+    enabled: bool = Form(False),
+    mode: str = Form(...),
+    portal_url: str = Form(""),
+    webhook_url: str = Form(""),
+    user_id: str = Form(""),
+    token: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    if mode not in {"fake", "rest"}:
+        raise HTTPException(status_code=422, detail="Допустимы режимы fake и rest")
+    settings = _bitrix_settings(db)
+    settings.enabled, settings.mode = enabled, mode
+    settings.portal_url = portal_url.strip().rstrip("/") or None
+    settings.webhook_url = webhook_url.strip().rstrip("/") or None
+    settings.user_id = user_id.strip() or None
+    if token.strip():
+        settings.encrypted_token = token.strip()
+    db.commit()
+    return RedirectResponse("/settings/integrations?message=Настройки сохранены", status_code=303)
+
+
+@app.post("/settings/integrations/bitrix24/check")
+def check_bitrix_connection(db: Session = Depends(get_db)):
+    settings = _bitrix_settings(db)
+    if settings.mode == "fake":
+        message = "Соединение успешно: используется локальный fake-режим"
+    else:
+        try:
+            user = Bitrix24RestGateway(settings, db).check_connection()
+            name = " ".join(filter(None, (user.get("NAME"), user.get("LAST_NAME"))))
+            message = f"Соединение успешно: {name or user.get('ID', 'Bitrix24')}"
+        except BitrixAPIError as exc:
+            return RedirectResponse(
+                f"/settings/integrations?error=Ошибка подключения: {exc}", status_code=303
+            )
+    return RedirectResponse(f"/settings/integrations?message={message}", status_code=303)
 
 
 @app.post("/protocols/{protocol_id}/demo-publish")
