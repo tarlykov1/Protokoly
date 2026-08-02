@@ -76,7 +76,7 @@ def save_assessment(db: Session, task: ProtocolTask, result: TaskAssessmentResul
     )
 
 
-class FakeTaskGateway:
+class FakeBitrixGateway:
     def create(
         self,
         db: Session,
@@ -144,6 +144,7 @@ def run_publication(
     *,
     retry_run: PublicationRun | None = None,
     fail_key: str | None = None,
+    gateway: FakeBitrixGateway | None = None,
 ):
     rows, errors, warnings = protocol_plan(db, protocol)
     if errors and retry_run is None:
@@ -162,7 +163,7 @@ def run_publication(
         rows = [r for r in rows if r[1].external_key in keys]
     order = {"root": 0, "subtask": 1, "independent": 2}
     rows.sort(key=lambda r: order.get(r[1].task_type, 9))
-    gw = FakeTaskGateway()
+    gw = gateway or FakeBitrixGateway()
     ok = fail = 0
     for task, planned in rows:
         assignment_id = (

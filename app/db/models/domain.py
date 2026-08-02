@@ -123,6 +123,34 @@ class Protocol(TimestampMixin, Base):
     created_by: Mapped[str | None] = mapped_column(String(255))
     project: Mapped[Project] = relationship(back_populates="protocols")
     tasks: Mapped[list["ProtocolTask"]] = relationship(back_populates="protocol")
+    history: Mapped[list["ProtocolHistory"]] = relationship(
+        back_populates="protocol", cascade="all, delete-orphan", order_by="ProtocolHistory.created_at"
+    )
+    comments: Mapped[list["ProtocolComment"]] = relationship(
+        back_populates="protocol", cascade="all, delete-orphan", order_by="ProtocolComment.created_at"
+    )
+
+
+class ProtocolHistory(Base):
+    __tablename__ = "protocol_history"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"))
+    from_status: Mapped[str] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32))
+    user: Mapped[str] = mapped_column(String(255))
+    comment: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    protocol: Mapped[Protocol] = relationship(back_populates="history")
+
+
+class ProtocolComment(Base):
+    __tablename__ = "protocol_comments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"))
+    user: Mapped[str] = mapped_column(String(255))
+    text: Mapped[str] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    protocol: Mapped[Protocol] = relationship(back_populates="comments")
 
 
 class ProtocolSection(Base):

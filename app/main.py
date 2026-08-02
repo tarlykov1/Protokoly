@@ -283,6 +283,7 @@ from app.core.config import get_settings
 from app.db.models.domain import (
     Employee,
     EmployeeList,
+    ProtocolComment,
     ProtocolSection,
     ProtocolTaskAssignment,
     PublicationRun,
@@ -294,6 +295,12 @@ from app.services.demo_publication import (
     run_publication,
     save_assessment,
     validate_task,
+)
+from app.services.protocols.workflow import (
+    WorkflowValidationError,
+    approval_errors,
+    available_transition,
+    transition_protocol,
 )
 
 
@@ -412,6 +419,8 @@ def demo_dashboard(request: Request, db: Session = Depends(get_db)):
 @app.get("/protocols/{protocol_id}")
 def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.get(Protocol, protocol_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
     sections = db.scalars(
         select(ProtocolSection)
         .where(ProtocolSection.protocol_id == protocol_id)
@@ -451,8 +460,45 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
             "warnings": warnings,
             "without_assignee": without_assignee,
             "without_deadline": without_deadline,
+            "next_status": available_transition(p),
+            "approval_errors": approval_errors(p) if p.status == "review" else [],
         },
     )
+
+
+@app.post("/protocols/{protocol_id}/status")
+def change_protocol_status(
+    protocol_id: int,
+    target_status: str = Form(...),
+    user: str = Form("Текущий пользователь"),
+    comment: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    try:
+        transition_protocol(db, protocol, target_status, user=user, comment=comment)
+    except WorkflowValidationError as exc:
+        raise HTTPException(status_code=409, detail=list(exc.errors)) from exc
+    return RedirectResponse(f"/protocols/{protocol_id}", status_code=303)
+
+
+@app.post("/protocols/{protocol_id}/comments")
+def add_protocol_comment(
+    protocol_id: int,
+    text: str = Form(...),
+    user: str = Form("Текущий пользователь"),
+    db: Session = Depends(get_db),
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="Комментарий не может быть пустым")
+    db.add(ProtocolComment(protocol=protocol, user=user.strip() or "Система", text=text.strip()))
+    db.commit()
+    return RedirectResponse(f"/protocols/{protocol_id}#comments", status_code=303)
 
 
 @app.post("/protocols/{protocol_id}/validate-all")
