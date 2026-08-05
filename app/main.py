@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.domain import ImportSession, Project, Protocol, ProtocolTask
 from app.db.session import get_db
+from app.services.export import ProtocolDocxExporter
 from app.services.imports.service import (
     confirm_session,
     create_preview_session,
@@ -560,6 +561,24 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
             "control_progress": ProtocolControlService.progress(list(p.tasks)),
             "created": request.query_params.get("created") == "1",
         },
+    )
+
+
+@app.get("/protocols/{protocol_id}/export/docx")
+def export_protocol_docx(protocol_id: int, db: Session = Depends(get_db)):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    try:
+        content = ProtocolDocxExporter(db).export(protocol_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    number = (protocol.number or str(protocol.id)).replace("/", "_").replace("\\", "_")
+    headers = {"Content-Disposition": f'attachment; filename="protocol_{number}.docx"'}
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
     )
 
 
