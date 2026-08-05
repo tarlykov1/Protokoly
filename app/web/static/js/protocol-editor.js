@@ -8,11 +8,11 @@
   };
   const value = (row, selector) => row.querySelector(selector).value;
   const serialize = () => ({
-    sections: [...document.querySelectorAll('.section-row')].map(row => ({id: row.dataset.sectionId, title: value(row, '.section-title')})),
+    sections: [...document.querySelectorAll('.section-row[data-section-id]:not([data-section-id=""])')].map(row => ({id: row.dataset.sectionId, title: value(row, '.section-title')})),
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
       description: value(row, '.task-description'), employee_ids: [...row.querySelector('.task-employees').selectedOptions].map(o => +o.value),
-      deadline: value(row, '.task-deadline'), section_id: value(row, '.task-section'), priority: value(row, '.task-priority'),
+      deadline: value(row, '.task-deadline'), section_id: row.closest('.section-body')?.dataset.sectionId || value(row, '.task-section'), priority: value(row, '.task-priority'),
       task_mode: value(row, '.task-mode'), position: rows().indexOf(row), is_controlled: row.querySelector('.task-controlled').checked
     }))
   });
@@ -35,33 +35,48 @@
     if (e.target.closest('.duplicate-task')) { await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/duplicate`, {method:'POST'}); location.reload(); }
     if (e.target.closest('.memo-assignee')) { const employee_id = row.querySelector('.task-employees').value; if (!employee_id) return message('Сначала выберите сотрудника из справочника', true); await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/match-assignee`, {method:'POST', body:JSON.stringify({source_name:e.target.dataset.sourceName, employee_id})}); location.reload(); }
   });
-  let dragged = null;
-  document.addEventListener('dragstart', e => {
-    dragged = e.target.closest('.task-row');
-    if (dragged) { dragged.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; }
-  });
-  document.addEventListener('dragend', () => { if (dragged) dragged.classList.remove('dragging'); dragged = null; });
-  document.addEventListener('dragover', e => { if (dragged && e.target.closest('.task-row, .section-row')) e.preventDefault(); });
-  document.addEventListener('drop', e => {
-    if (!dragged) return;
-    const target = e.target.closest('.task-row, .section-row');
-    if (!target || target === dragged) return;
-    e.preventDefault();
-    if (target.classList.contains('section-row')) {
-      target.after(dragged);
-      dragged.querySelector('.task-section').value = target.dataset.sectionId;
-    } else {
-      target.before(dragged);
-      dragged.querySelector('.task-section').value = target.querySelector('.task-section').value;
-    }
-    message('Порядок изменён — сохраните редактор');
-  });
+  const syncSectionSelects = () => {
+    document.querySelectorAll('.section-body').forEach(body => {
+      body.querySelectorAll('.task-row .task-section').forEach(select => { select.value = body.dataset.sectionId; });
+    });
+  };
+  if (window.Sortable) {
+    document.querySelectorAll('.section-body').forEach(body => {
+      new Sortable(body, {
+        group: 'protocol-tasks', handle: '.drag-handle', draggable: '.task-row', animation: 150,
+        ghostClass: 'dragging', onEnd: () => { syncSectionSelects(); message('Порядок изменён — сохраните редактор'); }
+      });
+    });
+  } else {
+    let dragged = null;
+    document.addEventListener('dragstart', e => {
+      dragged = e.target.closest('.task-row');
+      if (dragged) { dragged.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; }
+    });
+    document.addEventListener('dragend', () => { if (dragged) dragged.classList.remove('dragging'); dragged = null; });
+    document.addEventListener('dragover', e => { if (dragged && e.target.closest('.task-row, .section-row')) e.preventDefault(); });
+    document.addEventListener('drop', e => {
+      if (!dragged) return;
+      const target = e.target.closest('.task-row, .section-row');
+      if (!target || target === dragged) return;
+      e.preventDefault();
+      if (target.classList.contains('section-row')) {
+        target.after(dragged);
+        dragged.querySelector('.task-section').value = target.dataset.sectionId;
+      } else {
+        target.before(dragged);
+        dragged.querySelector('.task-section').value = target.querySelector('.task-section').value;
+      }
+      syncSectionSelects();
+      message('Порядок изменён — сохраните редактор');
+    });
+  }
   document.addEventListener('change', e => {
     if (!e.target.matches('.task-section')) return;
-    const section = document.querySelector(`.section-row[data-section-id="${e.target.value}"]`);
+    const body = document.querySelector(`.section-body[data-section-id="${e.target.value}"]`);
     const row = e.target.closest('.task-row');
-    const peers = rows().filter(item => item !== row && item.querySelector('.task-section').value === e.target.value);
-    (peers.at(-1) || section).after(row);
+    body?.append(row);
+    syncSectionSelects();
   });
   let timer; document.querySelector('#employee-search').addEventListener('input', e => { clearTimeout(timer); timer = setTimeout(async () => { const result = await request(`/employees/search?q=${encodeURIComponent(e.target.value)}`); document.querySelector('#employee-results').innerHTML = result.map(item => `<div>${item.full_name}</div>`).join(''); }, 200); });
   document.addEventListener('focusin', e => { if (e.target.matches('.text-clamp')) e.target.classList.add('expanded'); });

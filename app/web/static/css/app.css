@@ -4,3 +4,4 @@
 .task-row.dragging { opacity: .45; outline: 2px dashed var(--bs-primary); }
 .section-row { transition: background-color .15s ease; }
 .protocol-form { max-width: 960px; margin-inline: auto; }
+.action-panel{display:flex;gap:.75rem;flex-wrap:wrap}.btn-lg{border-radius:14px}.card-app,.panel,.hero{border-radius:16px}.task-row{background:#fff}.section-body.sortable-ghost,.task-row.sortable-ghost{opacity:.45}.drag-handle{font-weight:800;color:var(--primary);padding:.15rem .35rem;border-radius:8px;background:#eef3ff}.section-body{border-top:1px solid var(--border)}
