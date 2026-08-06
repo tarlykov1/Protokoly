@@ -565,12 +565,12 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
 
 
 @app.get("/protocols/{protocol_id}/export/docx")
-def export_protocol_docx(protocol_id: int, db: Session = Depends(get_db)):
+def export_protocol_docx(protocol_id: int, mode: str = "memo", db: Session = Depends(get_db)):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     try:
-        content = ProtocolDocxExporter(db).export(protocol_id)
+        content = ProtocolDocxExporter(db).export(protocol_id, mode=mode)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     number = (protocol.number or str(protocol.id)).replace("/", "_").replace("\\", "_")
@@ -593,6 +593,7 @@ def change_protocol_workflow(
         ("draft", "submit_review"): "review",
         ("review", "approve"): "approved",
         ("review", "return_draft"): "draft",
+        ("approved", "publish"): "published",
     }
     new_status = transitions.get((protocol.status, action))
     if not new_status:

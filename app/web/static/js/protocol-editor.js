@@ -8,7 +8,7 @@
   };
   const value = (row, selector) => row.querySelector(selector).value;
   const serialize = () => ({
-    sections: [...document.querySelectorAll('.section-row[data-section-id]:not([data-section-id=""])')].map(row => ({id: row.dataset.sectionId, title: value(row, '.section-title')})),
+    sections: [...document.querySelectorAll('.protocol-section')].map(section => { const body=section.querySelector('.section-body'); const title=section.querySelector('.section-title'); return title ? {id:body.dataset.sectionId,title:title.value} : null; }).filter(Boolean),
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
       description: value(row, '.task-description'), employee_ids: [...row.querySelector('.task-employees').selectedOptions].map(o => +o.value),
@@ -22,7 +22,7 @@
   document.addEventListener('change', e => { if (e.target.matches('.task-select')) updateCount(); });
   const updateCount = () => document.querySelector('#selected-count').textContent = document.querySelectorAll('.task-select:checked').length;
   document.querySelector('#bulk-apply').addEventListener('click', async () => {
-    const task_ids = [...document.querySelectorAll('.task-select:checked')].map(input => +input.closest('tr').dataset.taskId);
+    const task_ids = [...document.querySelectorAll('.task-select:checked')].map(input => +input.closest('.task-row').dataset.taskId);
     if (!task_ids.length) return message('Выберите поручения', true);
     const changes = {}; [['employee_id','#bulk-employee'],['deadline','#bulk-deadline'],['section_id','#bulk-section'],['task_mode','#bulk-mode']].forEach(([key, selector]) => { const val = document.querySelector(selector).value; if (val) changes[key] = val; });
     await request(`/protocols/${id}/editor/bulk`, {method:'POST', body:JSON.stringify({task_ids, changes})}); location.reload();
@@ -35,16 +35,19 @@
     if (e.target.closest('.duplicate-task')) { await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/duplicate`, {method:'POST'}); location.reload(); }
     if (e.target.closest('.memo-assignee')) { const employee_id = row.querySelector('.task-employees').value; if (!employee_id) return message('Сначала выберите сотрудника из справочника', true); await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/match-assignee`, {method:'POST', body:JSON.stringify({source_name:e.target.dataset.sourceName, employee_id})}); location.reload(); }
   });
+  const renumber = () => rows().forEach((row, index) => { row.querySelector('.task-number').value = String(index + 1); row.classList.add('is-dirty'); });
+  const markDirty = target => target.closest('.task-row')?.classList.add('is-dirty');
+  document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); });
   const syncSectionSelects = () => {
     document.querySelectorAll('.section-body').forEach(body => {
-      body.querySelectorAll('.task-row .task-section').forEach(select => { select.value = body.dataset.sectionId; });
+      body.querySelectorAll('.task-section').forEach(select => { select.value = body.dataset.sectionId; });
     });
   };
   if (window.Sortable) {
     document.querySelectorAll('.section-body').forEach(body => {
       new Sortable(body, {
         group: 'protocol-tasks', handle: '.drag-handle', draggable: '.task-row', animation: 150,
-        ghostClass: 'dragging', onEnd: () => { syncSectionSelects(); message('Порядок изменён — сохраните редактор'); }
+        ghostClass: 'sortable-ghost', chosenClass: 'sortable-chosen', dragClass: 'dragging', onStart: () => body.classList.add('drop-active'), onEnd: () => { document.querySelectorAll('.section-body').forEach(item => item.classList.remove('drop-active')); syncSectionSelects(); renumber(); message('Порядок изменён — сохраните редактор'); }
       });
     });
   } else {
@@ -57,11 +60,11 @@
     document.addEventListener('dragover', e => { if (dragged && e.target.closest('.task-row, .section-row')) e.preventDefault(); });
     document.addEventListener('drop', e => {
       if (!dragged) return;
-      const target = e.target.closest('.task-row, .section-row');
+      const target = e.target.closest('.task-row, .section-body');
       if (!target || target === dragged) return;
       e.preventDefault();
-      if (target.classList.contains('section-row')) {
-        target.after(dragged);
+      if (target.classList.contains('section-body')) {
+        target.append(dragged);
         dragged.querySelector('.task-section').value = target.dataset.sectionId;
       } else {
         target.before(dragged);
