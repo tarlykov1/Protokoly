@@ -10,6 +10,7 @@ from app.db.models.domain import (
     ProtocolTask,
     ProtocolTaskAssignment,
 )
+from app.services.protocols.participants import expand_group_assignment
 
 
 def editor_errors(task: ProtocolTask) -> list[str]:
@@ -56,6 +57,10 @@ def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask
                 db.add(assignment)
                 task.assignments.append(assignment)
                 seen.add(employee_id)
+        if data.get("participant_group_id"):
+            expand_group_assignment(db, task, int(data["participant_group_id"]))
+    elif "participant_group_id" in data:
+        expand_group_assignment(db, task, data["participant_group_id"] or None)
     task.validation_status = "ready" if not editor_errors(task) else "validation_required"
     return task
 

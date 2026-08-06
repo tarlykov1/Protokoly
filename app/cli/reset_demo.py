@@ -11,6 +11,8 @@ from app.db.models.domain import (
     ImportSession,
     Project,
     Protocol,
+    ProtocolParticipantGroup,
+    ProtocolParticipantGroupMember,
     ProtocolSection,
     ProtocolTask,
     ProtocolTaskAssignment,
@@ -35,6 +37,19 @@ def reset():
             db.execute(delete(ProtocolTaskAssignment).where(ProtocolTaskAssignment.protocol_task_id.in_(task_ids)))
             db.execute(delete(ProtocolTask).where(ProtocolTask.protocol_id.in_(protocol_ids)))
             db.execute(delete(ProtocolSection).where(ProtocolSection.protocol_id.in_(protocol_ids)))
+            group_ids = select(ProtocolParticipantGroup.id).where(
+                ProtocolParticipantGroup.protocol_id.in_(protocol_ids)
+            )
+            db.execute(
+                delete(ProtocolParticipantGroupMember).where(
+                    ProtocolParticipantGroupMember.group_id.in_(group_ids)
+                )
+            )
+            db.execute(
+                delete(ProtocolParticipantGroup).where(
+                    ProtocolParticipantGroup.protocol_id.in_(protocol_ids)
+                )
+            )
             db.execute(delete(ImportSession).where(ImportSession.project_id == project.id))
             db.execute(delete(Protocol).where(Protocol.project_id == project.id))
             db.execute(delete(EmployeeListMember).where(EmployeeListMember.employee_list_id.in_(select(EmployeeList.id).where(EmployeeList.project_id == project.id))))
