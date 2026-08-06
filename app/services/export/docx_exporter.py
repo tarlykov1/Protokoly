@@ -10,12 +10,14 @@ from app.db.models.domain import Protocol, ProtocolSection, ProtocolTask, Protoc
 
 
 class ProtocolDocxExporter:
-    """Build a DOCX protocol that keeps the MЕМО-like section/task structure."""
+    """Export protocols either as a round-trip MEMO or as a reader-friendly document."""
 
     def __init__(self, db: Session):
         self.db = db
 
-    def export(self, protocol_id: int) -> bytes:
+    def export(self, protocol_id: int, mode: str = "memo") -> bytes:
+        if mode not in {"memo", "print"}:
+            raise ValueError("Неизвестный режим экспорта")
         protocol = self.db.scalar(
             select(Protocol)
             .where(Protocol.id == protocol_id)
@@ -28,85 +30,81 @@ class ProtocolDocxExporter:
         )
         if protocol is None:
             raise ValueError("Протокол не найден")
-
         sections = self.db.scalars(
             select(ProtocolSection)
             .where(ProtocolSection.protocol_id == protocol_id)
             .order_by(ProtocolSection.sort_order, ProtocolSection.id)
         ).all()
         tasks = sorted(protocol.tasks, key=lambda task: (task.position, task.id))
-
         document = Document()
-        styles = document.styles
-        styles["Normal"].font.name = "Arial"
-        styles["Normal"].font.size = Pt(10)
-
-        heading = document.add_paragraph()
-        heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = heading.add_run(protocol.title)
-        run.bold = True
-        run.font.size = Pt(14)
-
-        meta = document.add_paragraph()
-        meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        meta.add_run(f"Протокол № {protocol.number or '—'}").bold = True
-        if protocol.meeting_date:
-            meta.add_run(f" от {protocol.meeting_date.strftime('%d.%m.%Y')}")
-
-        details = document.add_table(rows=0, cols=2)
-        details.style = "Table Grid"
-        for label, value in (
-            ("Проект", protocol.project.name if protocol.project else "—"),
-            ("Инициатор", protocol.initiator or "—"),
-            ("Ответственный", protocol.responsible or "—"),
-            ("Участники", protocol.participants or "—"),
-        ):
-            row = details.add_row().cells
-            row[0].text = label
-            row[1].text = value
-
-        document.add_paragraph()
-        for index, section in enumerate(sections, start=1):
-            paragraph = document.add_paragraph()
-            paragraph.style = "Heading 2"
-            paragraph.add_run(f"{index}. {section.title}").bold = True
-            self._add_task_table(
-                document, [task for task in tasks if task.section_id == section.id]
-            )
-
-        unsectioned = [task for task in tasks if not task.section_id]
-        if unsectioned:
-            paragraph = document.add_paragraph()
-            paragraph.style = "Heading 2"
-            paragraph.add_run("Без раздела").bold = True
-            self._add_task_table(document, unsectioned)
-
+        document.styles["Normal"].font.name = "Arial"
+        document.styles["Normal"].font.size = Pt(10)
+        if mode == "memo":
+            self._build_memo(document, protocol, sections, tasks)
+        else:
+            self._build_print(document, protocol, sections, tasks)
         output = BytesIO()
         document.save(output)
         return output.getvalue()
 
-    def _add_task_table(self, document: Document, tasks: list[ProtocolTask]) -> None:
-        table = document.add_table(rows=1, cols=5)
-        table.style = "Table Grid"
-        headers = ("№", "Поручение", "Исполнители", "Срок", "Порядок")
-        for cell, text in zip(table.rows[0].cells, headers, strict=True):
-            cell.text = text
-            for paragraph in cell.paragraphs:
-                for run in paragraph.runs:
-                    run.bold = True
-        if not tasks:
-            row = table.add_row().cells
-            row[1].text = "Поручений нет"
-            return
-        for order, task in enumerate(tasks, start=1):
-            row = table.add_row().cells
-            row[0].text = task.number
-            row[1].text = task.title
-            if task.description:
-                row[1].add_paragraph(task.description)
-            row[2].text = ", ".join(
-                assignment.assignee_name or "—"
-                for assignment in sorted(task.assignments, key=lambda item: item.sort_order)
-            ) or "—"
-            row[3].text = task.deadline.strftime("%d.%m.%Y") if task.deadline else "—"
-            row[4].text = str(order)
+    @staticmethod
+    def _assignees(task: ProtocolTask) -> str:
+        return ", ".join(
+            assignment.assignee_name or "—"
+            for assignment in sorted(task.assignments, key=lambda item: item.sort_order)
+        ) or "—"
+
+    def _build_memo(self, document, protocol, sections, tasks) -> None:
+        """Use paragraphs only: this is the canonical MemoProtocolParser contract."""
+        number = (protocol.number or str(protocol.id)).replace("M-", "М – ").replace("М-", "М – ")
+        document.add_paragraph(number)
+        heading = document.add_paragraph("ИТОГИ")
+        heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        heading.runs[0].bold = True
+        title = document.add_paragraph(protocol.title)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if protocol.meeting_date:
+            document.add_paragraph(
+                f"г. Санкт-Петербург «{protocol.meeting_date:%d}» "
+                f"{self._month(protocol.meeting_date.month)} {protocol.meeting_date:%Y} года"
+            )
+        document.add_paragraph("ОТМЕТИЛИ:").runs[0].bold = True
+        document.add_paragraph(protocol.description or "—")
+        document.add_paragraph("РЕШИЛИ:").runs[0].bold = True
+        task_groups = [(section.title, [t for t in tasks if t.section_id == section.id]) for section in sections]
+        unsectioned = [t for t in tasks if not t.section_id]
+        if unsectioned:
+            task_groups.append(("Без раздела", unsectioned))
+        task_index = 0
+        for section_title, section_tasks in task_groups:
+            document.add_paragraph(f"#{section_title}").runs[0].bold = True
+            for task in section_tasks:
+                task_index += 1
+                # Numbering follows persisted order. The original task number remains editable in UI,
+                # but contiguous MEMO numbering makes repeated imports deterministic.
+                document.add_paragraph(f"{task_index}. {task.title}")
+                document.add_paragraph("Исполнители:").runs[0].bold = True
+                document.add_paragraph(self._assignees(task))
+                document.add_paragraph("Срок:").runs[0].bold = True
+                document.add_paragraph(task.deadline.strftime("%d.%m.%Y") if task.deadline else "Без срока")
+
+    def _build_print(self, document, protocol, sections, tasks) -> None:
+        heading = document.add_paragraph(protocol.title)
+        heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        heading.runs[0].bold = True
+        document.add_paragraph(f"Протокол № {protocol.number or '—'}")
+        for section in sections:
+            document.add_heading(section.title, level=2)
+            for task in [t for t in tasks if t.section_id == section.id]:
+                paragraph = document.add_paragraph(style="List Number")
+                paragraph.add_run(task.title).bold = True
+                if task.description and task.description != task.title:
+                    document.add_paragraph(task.description)
+                document.add_paragraph(f"Исполнители: {self._assignees(task)}")
+                document.add_paragraph(
+                    f"Срок: {task.deadline:%d.%m.%Y}" if task.deadline else "Срок: —"
+                )
+
+    @staticmethod
+    def _month(month: int) -> str:
+        return ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")[month - 1]

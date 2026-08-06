@@ -119,3 +119,47 @@ def test_docx_export_endpoint_returns_attachment_file():
         assert "Первое поручение" in document_text(response.content)
     finally:
         teardown_export_protocol()
+
+
+def test_memo_export_round_trip_preserves_structure(tmp_path):
+    """The default download is a parser contract, not merely a visual report."""
+    from app.parsers.docx import parse_docx
+    from app.parsers.protocol import MemoProtocolParser
+
+    Base.metadata.create_all(engine)
+    teardown_export_protocol()
+    protocol_id = make_export_protocol()
+    try:
+        with SessionLocal() as db:
+            content = ProtocolDocxExporter(db).export(protocol_id, mode="memo")
+        path = tmp_path / "memo-roundtrip.docx"
+        path.write_bytes(content)
+        document = Document(BytesIO(content))
+        assert not document.tables
+
+        result = MemoProtocolParser().parse(parse_docx(str(path)))
+
+        assert result.errors == []
+        assert [section.title for section in result.sections] == ["Решения"]
+        assert [task.title for task in result.tasks] == ["Первое поручение", "Второе поручение"]
+        assert [task.assignee_raw for task in result.tasks] == [
+            "Петров Петр Петрович", "Сидорова Анна Игоревна"
+        ]
+        assert [task.deadline for task in result.tasks] == ["2026-09-01", "2026-09-02"]
+    finally:
+        teardown_export_protocol()
+
+
+def test_print_and_memo_export_modes_are_available():
+    Base.metadata.create_all(engine)
+    teardown_export_protocol()
+    protocol_id = make_export_protocol()
+    try:
+        client = TestClient(app)
+        memo = client.get(f"/protocols/{protocol_id}/export/docx?mode=memo")
+        printable = client.get(f"/protocols/{protocol_id}/export/docx?mode=print")
+        assert memo.status_code == printable.status_code == 200
+        assert "РЕШИЛИ:" in document_text(memo.content)
+        assert "Протокол №" in document_text(printable.content)
+    finally:
+        teardown_export_protocol()

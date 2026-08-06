@@ -176,10 +176,10 @@ def split_assignees(text: str) -> str | None:
 MEMO_TASK_RE = re.compile(r"^\s*(?P<num>\d{1,3})\s*[.)](?!\d)\s*(?P<title>.*)$")
 DATE_RE = re.compile(r"\b([0-3]?\d)[.\-/]([01]?\d)[.\-/](\d{2}|\d{4})\b")
 ASSIGNEE_LABEL_RE = re.compile(
-    r"^(исполнитель|исполнители|ответственный|ответственные)\s*:?\s*(.*)$", re.I
+    r"^(исполнитель|исполнители|ответственный|ответственные)\s*[:—–-]?\s*(.*)$", re.I
 )
 DEADLINE_LABEL_RE = re.compile(
-    r"^срок(?:\s+(?:исполнения|выполнения))?(?:\s+до)?\s*[:—–-]?\s*(.*)$", re.I
+    r"^(?:сроки?|до)(?:\s+(?:исполнения|выполнения))?(?:\s+до)?\s*[:—–-]?\s*(.*)$", re.I
 )
 BLOCK_RE = re.compile(r"^(?:блок\s+\d+\s*:?\s*(?P<number>.*)|#\s*(?P<tag>.+))$", re.I)
 SERVICE_STOP_RE = re.compile(
