@@ -367,6 +367,8 @@ from app.db.models.domain import (
     EmployeeList,
     IntegrationLog,
     IntegrationSettings,
+    ParticipantGroupTemplate,
+    ProtocolParticipantGroup,
     ProtocolSection,
     ProtocolTaskAssignment,
     ProtocolTaskLink,
@@ -379,6 +381,12 @@ from app.services.demo_publication import (
     run_publication,
     save_assessment,
     validate_task,
+)
+from app.services.protocols.participants import (
+    copy_members,
+    copy_template,
+    create_group,
+    replace_members,
 )
 from app.services.tasks.gateway import Bitrix24RestGateway, BitrixAPIError, get_bitrix_gateway
 from app.services.tasks.publication import PublicationNotAllowedError, PublicationService
@@ -743,6 +751,14 @@ def protocol_editor(
             employees=db.scalars(
                 select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.full_name)
             ).all(),
+            participant_groups=db.scalars(
+                select(ProtocolParticipantGroup)
+                .where(ProtocolParticipantGroup.protocol_id == protocol_id)
+                .order_by(ProtocolParticipantGroup.type, ProtocolParticipantGroup.name)
+            ).all(),
+            participant_templates=db.scalars(
+                select(ParticipantGroupTemplate).order_by(ParticipantGroupTemplate.name)
+            ).all(),
             current_filter=filter,
             error_count=sum(bool(editor_errors(task)) for task in protocol.tasks),
         ),
@@ -775,6 +791,76 @@ def save_protocol_editor(
                 task.position = int(task_data["position"])
     db.commit()
     return {"saved": True}
+
+
+@app.post("/protocols/{protocol_id}/participant-groups")
+def add_participant_group(
+    protocol_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    try:
+        group = create_group(db, protocol, payload.get("name", ""))
+        replace_members(db, group, payload.get("employee_ids", []))
+        db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"id": group.id, "name": group.name}
+
+
+@app.put("/protocols/{protocol_id}/participant-groups/{group_id}")
+def edit_participant_group(
+    protocol_id: int, group_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+):
+    group = db.get(ProtocolParticipantGroup, group_id)
+    if not group or group.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Список не найден")
+    if "name" in payload and group.type != "attendees":
+        group.name = payload["name"].strip() or group.name
+    replace_members(db, group, payload.get("employee_ids", []))
+    db.commit()
+    return {"updated": True}
+
+
+@app.delete("/protocols/{protocol_id}/participant-groups/{group_id}")
+def remove_participant_group(protocol_id: int, group_id: int, db: Session = Depends(get_db)):
+    group = db.get(ProtocolParticipantGroup, group_id)
+    if not group or group.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Список не найден")
+    if group.type == "attendees":
+        raise HTTPException(status_code=422, detail="Системный список удалить нельзя")
+    db.delete(group)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.post("/protocols/{protocol_id}/participant-groups/{group_id}/copy-attendees")
+def copy_attendees(protocol_id: int, group_id: int, db: Session = Depends(get_db)):
+    target = db.get(ProtocolParticipantGroup, group_id)
+    source = db.scalar(
+        select(ProtocolParticipantGroup).where(
+            ProtocolParticipantGroup.protocol_id == protocol_id,
+            ProtocolParticipantGroup.type == "attendees",
+        )
+    )
+    if not target or target.protocol_id != protocol_id or not source:
+        raise HTTPException(status_code=404, detail="Список не найден")
+    copy_members(db, source, target)
+    db.commit()
+    return {"copied": len(source.members)}
+
+
+@app.post("/protocols/{protocol_id}/participant-groups/from-template/{template_id}")
+def add_group_from_template(
+    protocol_id: int, template_id: int, db: Session = Depends(get_db)
+):
+    protocol, template = db.get(Protocol, protocol_id), db.get(ParticipantGroupTemplate, template_id)
+    if not protocol or not template:
+        raise HTTPException(status_code=404, detail="Протокол или шаблон не найден")
+    group = copy_template(db, protocol, template)
+    db.commit()
+    return {"id": group.id}
 
 
 @app.post("/protocols/{protocol_id}/editor/tasks")

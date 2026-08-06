@@ -14,6 +14,7 @@ from app.db.models.domain import (
     TaskAssessment,
 )
 from app.services.ai.provider import TaskAssessmentResult
+from app.services.protocols.participants import refresh_protocol_group_assignments
 from app.services.task_planning.planner import TaskPlanningService
 
 
@@ -127,6 +128,8 @@ class FakeTaskGateway:
 
 
 def protocol_plan(db: Session, protocol: Protocol):
+    # Group membership stays editable until this exact point; publish from a fresh expansion.
+    refresh_protocol_group_assignments(db, protocol)
     planner = TaskPlanningService()
     rows = []
     errors = []
