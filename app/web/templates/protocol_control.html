@@ -1,4 +1,5 @@
-{% extends "base.html" %}{% block content %}
+{% extends "base.html" %}{% import "components/ui.html" as ui %}{% block content %}
+{{ ui.action_bar(protocol.title, protocol.status, "/protocols/" ~ protocol.id) }}
 <nav class="nav nav-tabs mb-3"><a class="nav-link" href="/protocols/{{ protocol.id }}">Обзор</a><a class="nav-link active" href="/protocols/{{ protocol.id }}/control">Контроль исполнения</a></nav>
 <section class="hero mb-3"><h1>Контроль исполнения</h1><p>{{ protocol.title }}</p><div class="progress mb-2"><div class="progress-bar" style="width: {{ progress.percent }}%">{{ progress.percent }}%</div></div><div class="d-flex gap-4 flex-wrap"><strong>Всего поручений: {{ progress.total }}</strong><span>Выполнено: {{ progress.completed }}</span><span>В работе: {{ progress.in_progress }}</span><span>Просрочено: {{ progress.overdue }}</span></div></section>
 <nav class="filter-bar mb-3">{% for value,label in [('all','Все'),('completed','Выполнено'),('in_progress','В работе'),('overdue','Просрочено'),('attention','Требует внимания')] %}<a class="btn btn-sm {{ 'btn-primary' if current_filter == value else 'btn-outline-primary' }}" href="?filter={{ value }}">{{ label }}</a>{% endfor %}</nav>

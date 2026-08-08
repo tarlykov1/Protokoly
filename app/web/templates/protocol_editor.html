@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="editor-commandbar mb-4">
+<header class="editor-commandbar app-action-bar mb-4" data-testid="action-bar">
   <div class="editor-heading"><a href="/protocols/{{ protocol.id }}" class="editor-back">← Протоколы</a><div class="d-flex align-items-center gap-2 flex-wrap"><h1>{{ protocol.title }}</h1><span class="workflow-badge workflow-{{ protocol.status }}"><span></span>{{ {'draft':'Черновик','review':'На проверке','approved':'Согласован','published':'Опубликован'}.get(protocol.status, protocol.status) }}</span></div><p>{{ protocol.number or 'Без номера' }} · {{ protocol.tasks|length }} поручений</p></div>
   <div class="editor-actions">
     <button id="save-editor" class="btn btn-primary">Сохранить</button>
