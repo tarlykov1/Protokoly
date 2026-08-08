@@ -3,6 +3,13 @@
 {% set cls={'draft':'draft','review':'review','approved':'ready','validation_required':'review','ready':'ready','error':'error','uploaded':'imported','parsed':'imported','confirmed':'imported','published':'published','success':'published','partial':'partial','cancelled':'cancelled','failed':'error','completed':'ready'} %}
 <span class="status-badge status-{{ cls.get(status,'draft') }}"><span aria-hidden="true">●</span>{{ labels.get(status,status or 'Черновик') }}</span>
 {%- endmacro %}
+{% macro action_bar(title, status=None, back='/protocols', primary='', secondary='') -%}
+<header class="app-action-bar" data-testid="action-bar">
+  <a class="btn btn-ghost" href="{{ back }}">← Назад</a>
+  <div class="action-bar-title"><h1>{{ title }}</h1>{% if status %}{{ status_badge(status) }}{% endif %}</div>
+  <div class="action-bar-actions">{{ secondary|safe }}{{ primary|safe }}<div class="dropdown"><button class="btn btn-ghost dropdown-toggle" data-bs-toggle="dropdown">Еще</button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item" href="{{ back }}">Закрыть</a></li></ul></div></div>
+</header>
+{%- endmacro %}
 {% macro readiness(percent, label='Готовность') -%}
 <div class="readiness" aria-label="{{ label }} {{ percent }}%"><div class="d-flex justify-content-between small mb-1"><span>{{ label }}</span><strong>{{ percent }}%</strong></div><div class="readiness-track"><div class="readiness-fill" style="width:{{ percent }}%"></div></div></div>
 {%- endmacro %}

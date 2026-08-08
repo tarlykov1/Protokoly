@@ -23,5 +23,6 @@ def test_alembic_revisions_form_single_ordered_chain():
         "0009_protocol_user_workflow",
         "0010_add_integration_settings",
         "0011_participant_groups",
+        "0012_add_protocol_location",
     ]
     assert len(scripts.get_heads()) == 1

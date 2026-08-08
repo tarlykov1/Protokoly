@@ -236,6 +236,147 @@ def new_protocol(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/protocols/create")
+def protocol_create_wizard(request: Request, db: Session = Depends(get_db)):
+    """Render the manual protocol wizard; nothing is persisted until confirmation."""
+    employees = db.scalars(
+        select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.full_name)
+    ).all()
+    participant_templates = db.scalars(
+        select(ParticipantGroupTemplate).order_by(ParticipantGroupTemplate.name)
+    ).all()
+    return templates.TemplateResponse(
+        request,
+        "protocol_create_wizard.html",
+        common_context(
+            "Протоколы",
+            "Создание протокола",
+            projects=db.scalars(
+                select(Project).where(Project.is_active.is_(True)).order_by(Project.name)
+            ).all(),
+            employees=employees,
+            participant_templates=participant_templates,
+            employees_json=[{"id": item.id, "name": item.full_name} for item in employees],
+            templates_json=[{"id": item.id, "name": item.name} for item in participant_templates],
+        ),
+    )
+
+
+@app.post("/protocols/create")
+def complete_protocol_wizard(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Atomically create all aggregates collected by the five-step wizard."""
+    required = {"title": "Название", "number": "Номер", "project_id": "Проект"}
+    missing = [label for key, label in required.items() if not payload.get(key)]
+    if missing:
+        raise HTTPException(status_code=422, detail="Не заполнено: " + ", ".join(missing))
+    project = db.get(Project, int(payload["project_id"]))
+    if not project:
+        raise HTTPException(status_code=422, detail="Проект не найден")
+    try:
+        meeting_date = (
+            date.fromisoformat(payload["meeting_date"]) if payload.get("meeting_date") else None
+        )
+        protocol = Protocol(
+            project_id=project.id,
+            number=str(payload["number"]).strip(),
+            title=str(payload["title"]).strip(),
+            meeting_date=meeting_date,
+            location=(payload.get("location") or "").strip() or None,
+            initiator=(payload.get("initiator") or "").strip() or None,
+            responsible=(payload.get("responsible") or "").strip() or None,
+            description=(payload.get("description") or "").strip() or None,
+            status="draft",
+            source_type="manual",
+        )
+        db.add(protocol)
+        db.flush()
+        groups = {}
+        for index, item in enumerate(payload.get("groups", [])):
+            name = (
+                item.get("name") or ("Присутствовали" if index == 0 else f"Список {index}")
+            ).strip()
+            group_type = item.get("type", "custom")
+            group = None
+            if group_type == "attendees":
+                group = db.scalar(
+                    select(ProtocolParticipantGroup).where(
+                        ProtocolParticipantGroup.protocol_id == protocol.id,
+                        ProtocolParticipantGroup.type == "attendees",
+                    )
+                )
+            if group is None:
+                group = ProtocolParticipantGroup(
+                    protocol_id=protocol.id, name=name, type=group_type
+                )
+                db.add(group)
+                db.flush()
+            employee_ids = {int(value) for value in item.get("employee_ids", []) if value}
+            template_id = item.get("template_id")
+            if template_id:
+                template = db.get(ParticipantGroupTemplate, int(template_id))
+                employee_ids.update(
+                    member.employee_id for member in (template.members if template else [])
+                )
+            for employee_id in employee_ids:
+                employee = db.get(Employee, employee_id)
+                if employee:
+                    group.members.append(
+                        ProtocolParticipantGroupMember(
+                            employee_id=employee.id,
+                            name_snapshot=employee.full_name,
+                            source="wizard",
+                        )
+                    )
+            groups[item.get("client_id", name)] = group
+        sections = {}
+        for index, item in enumerate(payload.get("sections", [])):
+            section = ProtocolSection(
+                protocol_id=protocol.id, title=item.get("title", "Раздел").strip(), sort_order=index
+            )
+            db.add(section)
+            db.flush()
+            sections[item.get("client_id", str(index))] = section
+        for index, item in enumerate(payload.get("tasks", [])):
+            section = sections.get(item.get("section_id"))
+            task = ProtocolTask(
+                protocol_id=protocol.id,
+                section_id=section.id if section else None,
+                number=str(index + 1),
+                position=index,
+                title=(item.get("text") or item.get("title") or "").strip(),
+                deadline=date.fromisoformat(item["deadline"]) if item.get("deadline") else None,
+                priority=item.get("priority") or "normal",
+                create_as_subtasks=item.get("task_mode") == "subtasks",
+                is_controlled=bool(item.get("controlled")),
+                validation_status="draft",
+            )
+            db.add(task)
+            db.flush()
+            if item.get("employee_id"):
+                employee = db.get(Employee, int(item["employee_id"]))
+                if employee:
+                    task.assignments.append(ProtocolTaskAssignment(employee_id=employee.id))
+            elif item.get("group_id") and (group := groups.get(item["group_id"])):
+                for order, member in enumerate(group.members):
+                    task.assignments.append(
+                        ProtocolTaskAssignment(
+                            employee_id=member.employee_id,
+                            source_participant_group_id=group.id,
+                            sort_order=order,
+                        )
+                    )
+        db.commit()
+        db.refresh(protocol)
+    except (TypeError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Некорректные данные мастера") from exc
+    return {
+        "id": protocol.id,
+        "status": protocol.status,
+        "redirect_url": f"/protocols/{protocol.id}?created=1",
+    }
+
+
 @app.post("/protocols")
 def create_protocol(
     project_id: int = Form(...),
@@ -369,6 +510,7 @@ from app.db.models.domain import (
     IntegrationSettings,
     ParticipantGroupTemplate,
     ProtocolParticipantGroup,
+    ProtocolParticipantGroupMember,
     ProtocolSection,
     ProtocolTaskAssignment,
     ProtocolTaskLink,
@@ -852,10 +994,11 @@ def copy_attendees(protocol_id: int, group_id: int, db: Session = Depends(get_db
 
 
 @app.post("/protocols/{protocol_id}/participant-groups/from-template/{template_id}")
-def add_group_from_template(
-    protocol_id: int, template_id: int, db: Session = Depends(get_db)
-):
-    protocol, template = db.get(Protocol, protocol_id), db.get(ParticipantGroupTemplate, template_id)
+def add_group_from_template(protocol_id: int, template_id: int, db: Session = Depends(get_db)):
+    protocol, template = (
+        db.get(Protocol, protocol_id),
+        db.get(ParticipantGroupTemplate, template_id),
+    )
     if not protocol or not template:
         raise HTTPException(status_code=404, detail="Протокол или шаблон не найден")
     group = copy_template(db, protocol, template)

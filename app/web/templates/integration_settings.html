@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% import "components/ui.html" as ui %}
 {% block content %}
+{{ ui.action_bar("Настройки интеграции", none, "/dashboard", '<button type="submit" form="integration-form" class="btn btn-primary">Сохранить</button>') }}
 <section class="hero mb-4">
   <h1>Интеграции</h1><p class="muted">Настройка подключения к Bitrix24 REST API.</p>
   {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
-  <form method="post" action="/settings/integrations/bitrix24" class="row g-3">
+  <form id="integration-form" method="post" action="/settings/integrations/bitrix24" class="row g-3">
     <div class="col-12 form-check ms-2"><input class="form-check-input" type="checkbox" name="enabled" value="true" id="enabled" {% if settings.enabled %}checked{% endif %}><label class="form-check-label" for="enabled">Интеграция включена</label></div>
     <div class="col-md-4"><label class="form-label" for="mode">Режим</label><select class="form-select" id="mode" name="mode"><option value="fake" {% if settings.mode == 'fake' %}selected{% endif %}>fake — без сетевых запросов</option><option value="rest" {% if settings.mode == 'rest' %}selected{% endif %}>rest — Bitrix24 API</option></select></div>
     <div class="col-md-8"><label class="form-label" for="portal_url">Адрес портала</label><input class="form-control" id="portal_url" name="portal_url" type="url" placeholder="https://company.bitrix24.ru" value="{{ settings.portal_url or '' }}"></div>

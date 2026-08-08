@@ -1,0 +1,19 @@
+{% extends "base.html" %}{% import "components/ui.html" as ui %}
+{% block content %}
+<div class="wizard-shell" id="protocol-wizard">
+{{ ui.action_bar('Новый протокол', 'draft', '/protocols', '<button type="button" class="btn btn-primary" id="wizard-primary">Продолжить</button>', '<button type="button" class="btn btn-secondary" id="wizard-back" disabled>Назад</button>') }}
+<nav class="wizard-steps" aria-label="Этапы создания">{% for label in ['Основные данные','Участники','Структура','Поручения','Проверка'] %}<button type="button" class="wizard-step {{ 'active' if loop.first }}" data-step="{{ loop.index0 }}">{{ loop.index }}. {{ label }}</button>{% endfor %}</nav>
+<form id="wizard-form">
+<section class="wizard-page active panel p-4" data-page="0"><h2>Основные данные</h2><div class="row g-3">
+{% for name,label,type,required in [('number','Номер','text',true),('title','Название','text',true),('meeting_date','Дата','date',false),('location','Место','text',false),('initiator','Председатель / инициатор','text',false),('responsible','Секретарь / ответственный','text',false)] %}<div class="col-md-6"><label class="form-label" for="{{ name }}">{{ label }}</label><input class="form-control" id="{{ name }}" name="{{ name }}" type="{{ type }}" {% if required %}required{% endif %}></div>{% endfor %}
+<div class="col-md-6"><label class="form-label" for="project_id">Проект</label><select class="form-select" id="project_id" name="project_id" required><option value="">Выберите проект</option>{% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></div><div class="col-12"><label class="form-label" for="description">Описание</label><textarea class="form-control" id="description" name="description"></textarea></div></div></section>
+<section class="wizard-page panel p-4" data-page="1"><div class="d-flex justify-content-between"><h2>Участники</h2><button type="button" class="btn btn-secondary" id="add-group">＋ Локальный список</button></div><label class="form-label" for="employee-search">Поиск сотрудников</label><input id="employee-search" class="form-control mb-3" placeholder="Начните вводить имя"><div id="groups" class="wizard-list" aria-label="Присутствовали и локальные списки"></div></section>
+<section class="wizard-page panel p-4" data-page="2"><div class="d-flex justify-content-between"><h2>Структура</h2><button type="button" class="btn btn-secondary" id="add-wizard-section">＋ Раздел</button></div><div id="sections" class="wizard-list"></div></section>
+<section class="wizard-page panel p-4" data-page="3"><div class="d-flex justify-content-between"><h2>Поручения</h2><button type="button" class="btn btn-secondary" id="add-wizard-task">＋ Поручение</button></div><div id="tasks" class="wizard-list"></div></section>
+<section class="wizard-page panel p-4" data-page="4"><h2>Проверка</h2><p class="muted">Ошибки необходимо исправить. Предупреждения не мешают сохранить черновик.</p><ul id="wizard-validation" class="validation-list"></ul><div id="wizard-summary"></div></section>
+</form></div>
+<script>
+window.wizardData={employees:{{ employees_json|tojson }}, templates:{{ templates_json|tojson }}};
+</script>
+<script src="/static/js/protocol-wizard.js"></script>
+{% endblock %}

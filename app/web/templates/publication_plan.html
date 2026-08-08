@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "components/ui.html" as ui %}
 {% block content %}
+{{ ui.action_bar(protocol.title, protocol.status, "/protocols/" ~ protocol.id) }}
 <section class="hero mb-3">
   <p class="muted mb-1">Протокол</p>
   {% if demo_mode %}<p class="muted">Это тестовый шлюз: реальные задачи в Bitrix24 не создаются.</p>{% endif %}

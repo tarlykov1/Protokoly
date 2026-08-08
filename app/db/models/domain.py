@@ -143,6 +143,7 @@ class Protocol(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(500))
     number: Mapped[str | None] = mapped_column(String(64))
     meeting_date: Mapped[date | None] = mapped_column(Date())
+    location: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(32), default="draft")
     source_type: Mapped[str] = mapped_column(String(32), default="manual")
     source_filename: Mapped[str | None] = mapped_column(String(255))
