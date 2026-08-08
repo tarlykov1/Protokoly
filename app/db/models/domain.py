@@ -10,9 +10,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -153,6 +154,62 @@ class Protocol(TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text())
     project: Mapped[Project] = relationship(back_populates="protocols")
     tasks: Mapped[list["ProtocolTask"]] = relationship(back_populates="protocol")
+    participant_groups: Mapped[list["ProtocolParticipantGroup"]] = relationship(
+        back_populates="protocol", cascade="all, delete-orphan"
+    )
+
+
+class ProtocolParticipantGroup(TimestampMixin, Base):
+    """A protocol-local, independently editable list of participants."""
+
+    __tablename__ = "protocol_participant_groups"
+    __table_args__ = (UniqueConstraint("protocol_id", "name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    type: Mapped[str] = mapped_column(String(32), default="custom")
+    protocol: Mapped[Protocol] = relationship(back_populates="participant_groups")
+    members: Mapped[list["ProtocolParticipantGroupMember"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan", order_by="ProtocolParticipantGroupMember.id"
+    )
+
+
+class ProtocolParticipantGroupMember(Base):
+    __tablename__ = "protocol_participant_group_members"
+    __table_args__ = (UniqueConstraint("group_id", "employee_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_participant_groups.id", ondelete="CASCADE")
+    )
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    name_snapshot: Mapped[str] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(32), default="manual")
+    group: Mapped[ProtocolParticipantGroup] = relationship(back_populates="members")
+    employee: Mapped[Employee] = relationship()
+
+
+class ParticipantGroupTemplate(TimestampMixin, Base):
+    """Globally reusable template; copying it never links protocol membership back to it."""
+
+    __tablename__ = "participant_group_templates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    members: Mapped[list["ParticipantGroupTemplateMember"]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+
+
+class ParticipantGroupTemplateMember(Base):
+    __tablename__ = "participant_group_template_members"
+    __table_args__ = (UniqueConstraint("template_id", "employee_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    template_id: Mapped[int] = mapped_column(
+        ForeignKey("participant_group_templates.id", ondelete="CASCADE")
+    )
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    name_snapshot: Mapped[str] = mapped_column(String(255))
+    template: Mapped[ParticipantGroupTemplate] = relationship(back_populates="members")
+    employee: Mapped[Employee] = relationship()
 
 
 class ProtocolSection(Base):
@@ -244,6 +301,9 @@ class ProtocolTaskAssignment(Base):
     )
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     source_employee_list_id: Mapped[int | None] = mapped_column(ForeignKey("employee_lists.id"))
+    source_participant_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("protocol_participant_groups.id", ondelete="SET NULL")
+    )
     individual_title: Mapped[str | None] = mapped_column(String(500))
     individual_description: Mapped[str | None] = mapped_column(Text())
     individual_acceptance_criteria: Mapped[str | None] = mapped_column(Text())
@@ -384,3 +444,25 @@ class ImportSession(Base):
     protocol_id: Mapped[int | None] = mapped_column(ForeignKey("protocols.id"))
     project: Mapped[Project] = relationship()
     protocol: Mapped[Protocol | None] = relationship()
+
+
+@event.listens_for(Session, "before_flush")
+def create_default_participant_group(session: Session, _flush_context, _instances) -> None:
+    """Ensure every protocol, regardless of its creation entry point, has the system group."""
+    for obj in session.new:
+        if isinstance(obj, Protocol) and not any(
+            group.type == "attendees" for group in obj.participant_groups
+        ):
+            obj.participant_groups.append(
+                ProtocolParticipantGroup(name="Присутствовали", type="attendees")
+            )
+
+
+@event.listens_for(Protocol, "after_insert")
+def clear_orphaned_protocol_groups(_mapper, connection, target: Protocol) -> None:
+    """Defend against SQLite clients that delete protocols with FK enforcement disabled."""
+    connection.execute(
+        ProtocolParticipantGroup.__table__.delete().where(
+            ProtocolParticipantGroup.protocol_id == target.id
+        )
+    )

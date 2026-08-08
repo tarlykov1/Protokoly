@@ -12,6 +12,7 @@
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
       description: value(row, '.task-description'), employee_ids: [...row.querySelector('.task-employees').selectedOptions].map(o => +o.value),
+      participant_group_id: value(row, '.task-group') || null,
       deadline: value(row, '.task-deadline'), section_id: row.closest('.section-body')?.dataset.sectionId || value(row, '.task-section'), priority: value(row, '.task-priority'),
       task_mode: value(row, '.task-mode'), position: rows().indexOf(row), is_controlled: row.querySelector('.task-controlled').checked
     }))
@@ -29,6 +30,13 @@
   });
   document.querySelector('#add-task').addEventListener('click', async () => { await request(`/protocols/${id}/editor/tasks`, {method:'POST', body:'{}'}); location.reload(); });
   document.querySelector('#add-section').addEventListener('click', async () => { const title = prompt('Название раздела'); if (title) { await request(`/protocols/${id}/editor/sections`, {method:'POST', body:JSON.stringify({title})}); location.reload(); } });
+  document.querySelector('#add-participant-group')?.addEventListener('click', async () => { const name=prompt('Название списка'); if(name){await request(`/protocols/${id}/participant-groups`,{method:'POST',body:JSON.stringify({name})});location.reload();} });
+  document.querySelector('#participant-template')?.addEventListener('change', async e => { if(e.target.value){await request(`/protocols/${id}/participant-groups/from-template/${e.target.value}`,{method:'POST'});location.reload();} });
+  document.querySelectorAll('.participant-card').forEach(card => card.addEventListener('click', async e => { const gid=card.dataset.groupId;
+    if(e.target.closest('.delete-participant-group')&&confirm('Удалить список?')){await request(`/protocols/${id}/participant-groups/${gid}`,{method:'DELETE'});location.reload();}
+    if(e.target.closest('.copy-attendees')){await request(`/protocols/${id}/participant-groups/${gid}/copy-attendees`,{method:'POST'});location.reload();}
+    if(e.target.closest('.edit-participant-group')){const raw=prompt('ID сотрудников через запятую');if(raw!==null){await request(`/protocols/${id}/participant-groups/${gid}`,{method:'PUT',body:JSON.stringify({employee_ids:raw.split(',').map(v=>v.trim()).filter(Boolean)})});location.reload();}}
+  }));
   document.addEventListener('click', async e => {
     const row = e.target.closest('.task-row'); if (!row) return;
     if (e.target.closest('.delete-task') && confirm('Удалить поручение?')) { await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}`, {method:'DELETE'}); row.remove(); }
@@ -81,7 +89,7 @@
     body?.append(row);
     syncSectionSelects();
   });
-  let timer; document.querySelector('#employee-search').addEventListener('input', e => { clearTimeout(timer); timer = setTimeout(async () => { const result = await request(`/employees/search?q=${encodeURIComponent(e.target.value)}`); document.querySelector('#employee-results').innerHTML = result.map(item => `<div>${item.full_name}</div>`).join(''); }, 200); });
+  let timer; document.querySelector('#employee-search')?.addEventListener('input', e => { clearTimeout(timer); timer = setTimeout(async () => { const result = await request(`/employees/search?q=${encodeURIComponent(e.target.value)}`); document.querySelector('#employee-results').innerHTML = result.map(item => `<div>${item.full_name}</div>`).join(''); }, 200); });
   document.addEventListener('focusin', e => { if (e.target.matches('.text-clamp')) e.target.classList.add('expanded'); });
   document.addEventListener('focusout', e => { if (e.target.matches('.text-clamp')) e.target.classList.remove('expanded'); });
 })();
