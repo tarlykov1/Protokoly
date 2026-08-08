@@ -5,6 +5,7 @@ Revises: 0010_add_integration_settings
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0011_participant_groups"
