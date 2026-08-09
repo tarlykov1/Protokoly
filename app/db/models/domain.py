@@ -186,7 +186,9 @@ class ProtocolParticipantGroup(TimestampMixin, Base):
     type: Mapped[str] = mapped_column(String(32), default="custom")
     protocol: Mapped[Protocol] = relationship(back_populates="participant_groups")
     members: Mapped[list["ProtocolParticipantGroupMember"]] = relationship(
-        back_populates="group", cascade="all, delete-orphan", order_by="ProtocolParticipantGroupMember.id"
+        back_populates="group",
+        cascade="all, delete-orphan",
+        order_by="ProtocolParticipantGroupMember.id",
     )
 
 
@@ -269,6 +271,11 @@ class ProtocolTask(TimestampMixin, Base):
     assignments: Mapped[list["ProtocolTaskAssignment"]] = relationship(
         back_populates="protocol_task", cascade="all, delete-orphan"
     )
+    participant_group_selections: Mapped[list["ProtocolTaskParticipantGroup"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="ProtocolTaskParticipantGroup.sort_order",
+    )
     bitrix_links: Mapped[list["BitrixTaskLink"]] = relationship(back_populates="protocol_task")
     external_links: Mapped[list["ProtocolTaskLink"]] = relationship(
         back_populates="protocol_task", cascade="all, delete-orphan"
@@ -336,6 +343,23 @@ class ProtocolTaskAssignment(Base):
     def assignee_name(self) -> str | None:
         """Name shown for both resolved employees and assignees preserved from an import."""
         return self.employee.full_name if self.employee else self.individual_title
+
+
+class ProtocolTaskParticipantGroup(Base):
+    """A durable group selection; members are resolved only when a plan is built."""
+
+    __tablename__ = "protocol_task_participant_groups"
+    __table_args__ = (UniqueConstraint("protocol_task_id", "participant_group_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_task_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="CASCADE"), index=True
+    )
+    participant_group_id: Mapped[int] = mapped_column(
+        ForeignKey("protocol_participant_groups.id", ondelete="CASCADE"), index=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer(), default=0)
+    group: Mapped[ProtocolParticipantGroup] = relationship()
+    task: Mapped[ProtocolTask] = relationship(back_populates="participant_group_selections")
 
 
 class BitrixTaskLink(Base):

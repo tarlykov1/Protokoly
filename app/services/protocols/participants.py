@@ -4,11 +4,13 @@ from sqlalchemy.orm import Session
 from app.db.models.domain import (
     Employee,
     ParticipantGroupTemplate,
+    ParticipantGroupTemplateMember,
     Protocol,
     ProtocolParticipantGroup,
     ProtocolParticipantGroupMember,
     ProtocolTask,
     ProtocolTaskAssignment,
+    ProtocolTaskParticipantGroup,
 )
 
 
@@ -78,41 +80,87 @@ def copy_template(db: Session, protocol: Protocol, template: ParticipantGroupTem
     return group
 
 
-def expand_group_assignment(db: Session, task: ProtocolTask, group_id: int | None) -> None:
-    """Materialize the selected group into employee assignments for task publication."""
+def save_group_as_template(db: Session, group: ProtocolParticipantGroup, name: str | None = None):
+    template = ParticipantGroupTemplate(name=(name or group.name).strip())
+    template.members = [
+        ParticipantGroupTemplateMember(employee_id=m.employee_id, name_snapshot=m.name_snapshot)
+        for m in group.members
+    ]
+    db.add(template)
+    db.flush()
+    return template
+
+
+def set_group_assignments(db: Session, task: ProtocolTask, group_ids: list[int]) -> None:
+    """Store selections independently of their mutable membership and refresh the snapshot."""
+    db.query(ProtocolTaskParticipantGroup).filter_by(protocol_task_id=task.id).delete()
+    seen: set[int] = set()
+    for order, value in enumerate(group_ids):
+        group_id = int(value)
+        group = db.get(ProtocolParticipantGroup, group_id)
+        if not group or group.protocol_id != task.protocol_id:
+            raise ValueError("Список участников не принадлежит протоколу")
+        if group_id not in seen:
+            db.add(
+                ProtocolTaskParticipantGroup(
+                    protocol_task_id=task.id, participant_group_id=group_id, sort_order=order
+                )
+            )
+            seen.add(group_id)
+    db.flush()
+    expand_selected_groups(db, task)
+
+
+def selected_groups(db: Session, task: ProtocolTask) -> list[ProtocolParticipantGroup]:
+    selections = db.scalars(
+        select(ProtocolTaskParticipantGroup)
+        .where(ProtocolTaskParticipantGroup.protocol_task_id == task.id)
+        .order_by(ProtocolTaskParticipantGroup.sort_order, ProtocolTaskParticipantGroup.id)
+    ).all()
+    return [item.group for item in selections]
+
+
+def expand_selected_groups(db: Session, task: ProtocolTask) -> None:
+    """Resolve current members of every selected group, de-duplicated by employee."""
     for assignment in list(task.assignments):
         if assignment.source_participant_group_id:
             db.delete(assignment)
             task.assignments.remove(assignment)
-    if not group_id:
-        return
-    group = db.get(ProtocolParticipantGroup, int(group_id))
-    if not group or group.protocol_id != task.protocol_id:
-        raise ValueError("Список участников не принадлежит протоколу")
     existing = {item.employee_id for item in task.assignments if item.employee_id}
-    for member in group.members:
-        if member.employee_id not in existing:
-            assignment = ProtocolTaskAssignment(
-                protocol_task_id=task.id,
-                employee_id=member.employee_id,
-                source_participant_group_id=group.id,
-                sort_order=len(task.assignments),
-            )
-            db.add(assignment)
-            task.assignments.append(assignment)
-            existing.add(member.employee_id)
+    for group in selected_groups(db, task):
+        for member in group.members:
+            if member.employee_id not in existing:
+                assignment = ProtocolTaskAssignment(
+                    protocol_task_id=task.id,
+                    employee_id=member.employee_id,
+                    source_participant_group_id=group.id,
+                    sort_order=len(task.assignments),
+                )
+                db.add(assignment)
+                task.assignments.append(assignment)
+                existing.add(member.employee_id)
+
+
+def expand_group_assignment(db: Session, task: ProtocolTask, group_id: int | None) -> None:
+    """Backward-compatible single-group API."""
+    set_group_assignments(db, task, [group_id] if group_id else [])
 
 
 def refresh_protocol_group_assignments(db: Session, protocol: Protocol) -> None:
     for task in protocol.tasks:
-        group_id = next(
-            (
-                item.source_participant_group_id
-                for item in task.assignments
-                if item.source_participant_group_id
-            ),
-            None,
-        )
-        if group_id:
-            expand_group_assignment(db, task, group_id)
+        # New selections are authoritative. Legacy rows are migrated lazily.
+        groups = selected_groups(db, task)
+        if not groups:
+            legacy_ids = list(
+                dict.fromkeys(
+                    item.source_participant_group_id
+                    for item in task.assignments
+                    if item.source_participant_group_id
+                )
+            )
+            if legacy_ids:
+                set_group_assignments(db, task, legacy_ids)
+                continue
+        if groups:
+            expand_selected_groups(db, task)
     db.flush()
