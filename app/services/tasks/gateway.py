@@ -123,6 +123,9 @@ class Bitrix24RestGateway(TaskGateway):
         result = self._call("user.current")
         return dict(result or {})
 
+    def list_users(self) -> list[dict[str, Any]]:
+        return [dict(user) for user in (self._call("user.get") or [])]
+
     def create_task(self, task_data: dict[str, Any]) -> dict[str, Any]:
         fields = {"TITLE": task_data["title"]}
         if task_data.get("responsible_id"):
