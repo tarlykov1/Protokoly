@@ -173,6 +173,32 @@ class Protocol(TimestampMixin, Base):
     participant_groups: Mapped[list["ProtocolParticipantGroup"]] = relationship(
         back_populates="protocol", cascade="all, delete-orphan"
     )
+    publication_settings: Mapped["PublicationSettings | None"] = relationship(
+        back_populates="protocol", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class PublicationSettings(TimestampMixin, Base):
+    """Protocol-specific, durable Bitrix24 publication choices."""
+
+    __tablename__ = "publication_settings"
+    __table_args__ = (UniqueConstraint("protocol_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(
+        ForeignKey("protocols.id", ondelete="CASCADE"), index=True
+    )
+    bitrix_project_id: Mapped[int | None] = mapped_column(Integer())
+    task_creator_id: Mapped[int | None] = mapped_column(Integer())
+    default_responsible_id: Mapped[int | None] = mapped_column(Integer())
+    parent_task_mode: Mapped[str] = mapped_column(String(32), default="separate")
+    root_task_title: Mapped[str | None] = mapped_column(String(500))
+    observers: Mapped[list] = mapped_column(JSON(), default=list)
+    accomplices: Mapped[list] = mapped_column(JSON(), default=list)
+    create_checklist: Mapped[bool] = mapped_column(Boolean(), default=False)
+    add_protocol_link: Mapped[bool] = mapped_column(Boolean(), default=True)
+    sync_enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
+    custom_fields: Mapped[dict] = mapped_column(JSON(), default=dict)
+    protocol: Mapped[Protocol] = relationship(back_populates="publication_settings")
 
 
 class ProtocolParticipantGroup(TimestampMixin, Base):
@@ -302,6 +328,7 @@ class ProtocolTaskControl(TimestampMixin, Base):
     planned_date: Mapped[date | None] = mapped_column(Date())
     actual_date: Mapped[date | None] = mapped_column(Date())
     result_comment: Mapped[str | None] = mapped_column(Text())
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     protocol_task: Mapped[ProtocolTask] = relationship(back_populates="control")
 
 

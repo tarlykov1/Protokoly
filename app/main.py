@@ -542,6 +542,7 @@ from app.services.protocols.participants import (
 )
 from app.services.tasks.gateway import Bitrix24RestGateway, BitrixAPIError, get_bitrix_gateway
 from app.services.tasks.publication import PublicationNotAllowedError, PublicationService
+from app.services.tasks.sync import BitrixTaskSyncService
 
 
 @app.get("/demo-docx")
@@ -1224,6 +1225,9 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
         )
         or 0
     )
+    service = PublicationService(db, get_bitrix_gateway(db))
+    settings = service.settings_for(p)
+    preview = service.preview(p)
     return templates.TemplateResponse(
         request,
         "publication_plan.html",
@@ -1237,24 +1241,81 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
             "assignee_counts": assignee_counts,
             "group_breakdown": group_breakdown,
             "section_count": section_count,
+            "settings": settings,
+            "preview": preview,
         },
     )
 
 
+@app.get("/protocols/{protocol_id}/bitrix-projects")
+def search_bitrix_projects(protocol_id: int, q: str = "", db: Session = Depends(get_db)):
+    if not db.get(Protocol, protocol_id):
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    try:
+        return {"projects": get_bitrix_gateway(db).list_projects(q or None)}
+    except BitrixAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/protocols/{protocol_id}/publication-settings")
+def save_publication_settings(
+    protocol_id: int,
+    bitrix_project_id: int | None = Form(None),
+    task_creator_id: int | None = Form(None),
+    default_responsible_id: int | None = Form(None),
+    parent_task_mode: str = Form("separate"),
+    root_task_title: str | None = Form(None),
+    observers: str = Form(""),
+    accomplices: str = Form(""),
+    create_checklist: bool = Form(False),
+    add_protocol_link: bool = Form(False),
+    sync_enabled: bool = Form(False),
+    db: Session = Depends(get_db),
+):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    settings = PublicationService(db, get_bitrix_gateway(db)).settings_for(protocol)
+    settings.bitrix_project_id = bitrix_project_id
+    settings.task_creator_id = task_creator_id
+    settings.default_responsible_id = default_responsible_id
+    settings.parent_task_mode = parent_task_mode
+    settings.root_task_title = root_task_title
+    settings.observers = [int(x.strip()) for x in observers.split(",") if x.strip()]
+    settings.accomplices = [int(x.strip()) for x in accomplices.split(",") if x.strip()]
+    settings.create_checklist = create_checklist
+    settings.add_protocol_link = add_protocol_link
+    settings.sync_enabled = sync_enabled
+    db.commit()
+    return RedirectResponse(f"/protocols/{protocol_id}/publication-plan", status_code=303)
+
+
 @app.post("/protocols/{protocol_id}/publish")
-def publish_protocol(protocol_id: int, db: Session = Depends(get_db)):
+def publish_protocol(protocol_id: int, update_existing: bool = Form(False), db: Session = Depends(get_db)):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     service = PublicationService(db, get_bitrix_gateway(db))
     try:
-        result = service.publish(protocol)
+        result = service.publish(protocol, update_existing=update_existing)
     except PublicationNotAllowedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BitrixAPIError as exc:
         raise HTTPException(status_code=502, detail=f"Ошибка Bitrix24: {exc}") from exc
     suffix = "?message=" + result.warnings[0] if result.warnings else ""
     return RedirectResponse(f"/protocols/{protocol_id}/publication-plan{suffix}", status_code=303)
+
+
+@app.post("/protocols/{protocol_id}/sync-bitrix")
+def sync_protocol_bitrix(protocol_id: int, db: Session = Depends(get_db)):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Протокол не найден")
+    result = BitrixTaskSyncService(db, get_bitrix_gateway(db)).sync(protocol)
+    return RedirectResponse(
+        f"/protocols/{protocol_id}/control?sync_updated={result.updated}&sync_errors={result.errors}",
+        status_code=303,
+    )
 
 
 def _bitrix_settings(db: Session) -> IntegrationSettings:

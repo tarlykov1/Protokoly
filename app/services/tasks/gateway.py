@@ -34,6 +34,9 @@ class TaskGateway(ABC):
         task = self.get_task(task_id)
         return str(task.get("status")) if task else None
 
+    def list_projects(self, query: str | None = None) -> list[dict[str, Any]]:
+        return []
+
 
 class FakeBitrixGateway(TaskGateway):
     """Deterministic, network-free Bitrix24 implementation."""
@@ -69,6 +72,10 @@ class FakeBitrixGateway(TaskGateway):
 
     def add_comment(self, task_id: str, comment: str) -> dict[str, Any]:
         return {"id": f"COMMENT-{task_id}", "comment": comment}
+
+    def list_projects(self, query: str | None = None) -> list[dict[str, Any]]:
+        projects = [{"id": "10", "name": "Тестовый проект"}]
+        return [p for p in projects if not query or query.lower() in p["name"].lower()]
 
 
 FakeTaskGateway = FakeBitrixGateway
@@ -126,12 +133,34 @@ class Bitrix24RestGateway(TaskGateway):
     def list_users(self) -> list[dict[str, Any]]:
         return [dict(user) for user in (self._call("user.get") or [])]
 
+    def list_projects(self, query: str | None = None) -> list[dict[str, Any]]:
+        payload = {"FILTER": {"%NAME": query}} if query else {}
+        result = self._call("sonet_group.get", payload) or []
+        return [
+            {"id": str(item.get("ID") or item.get("id")), "name": item.get("NAME") or ""}
+            for item in result
+        ]
+
     def create_task(self, task_data: dict[str, Any]) -> dict[str, Any]:
-        fields = {"TITLE": task_data["title"]}
-        if task_data.get("responsible_id"):
-            fields["RESPONSIBLE_ID"] = task_data["responsible_id"]
-        if task_data.get("deadline"):
-            fields["DEADLINE"] = task_data["deadline"]
+        mapping = {
+            "title": "TITLE",
+            "description": "DESCRIPTION",
+            "responsible_id": "RESPONSIBLE_ID",
+            "created_by": "CREATED_BY",
+            "deadline": "DEADLINE",
+            "group_id": "GROUP_ID",
+            "accomplices": "ACCOMPLICES",
+            "auditors": "AUDITORS",
+            "parent_id": "PARENT_ID",
+        }
+        fields = {
+            target: task_data[source]
+            for source, target in mapping.items()
+            if task_data.get(source) not in (None, "", [])
+        }
+        fields.update(
+            {key: value for key, value in task_data.get("custom_fields", {}).items() if key.startswith("UF_")}
+        )
         result = self._call("tasks.task.add", {"fields": fields}) or {}
         task = result.get("task", result)
         task_id = str(task.get("id") or task.get("ID"))
@@ -145,10 +174,17 @@ class Bitrix24RestGateway(TaskGateway):
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         result = self._call("tasks.task.get", {"taskId": task_id}) or {}
-        return result.get("task", result) or None
+        task = result.get("task", result) or None
+        if not task:
+            return None
+        normalized = {str(key).lower(): value for key, value in task.items()}
+        normalized["id"] = str(normalized.get("id", task_id))
+        return normalized
 
     def update_task(self, task_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        result = self._call("tasks.task.update", {"taskId": task_id, "fields": data})
+        mapping = {"title": "TITLE", "description": "DESCRIPTION", "responsible_id": "RESPONSIBLE_ID", "created_by": "CREATED_BY", "deadline": "DEADLINE", "group_id": "GROUP_ID", "accomplices": "ACCOMPLICES", "auditors": "AUDITORS", "parent_id": "PARENT_ID"}
+        fields = {mapping.get(key, key): value for key, value in data.items()}
+        result = self._call("tasks.task.update", {"taskId": task_id, "fields": fields})
         return {"id": str(task_id), "result": result}
 
     def get_user(self, name: str | None = None) -> dict[str, Any] | None:
