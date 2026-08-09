@@ -232,6 +232,9 @@ class ProtocolTask(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"))
     section_id: Mapped[int | None] = mapped_column(ForeignKey("protocol_sections.id"))
+    parent_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("protocol_tasks.id", ondelete="SET NULL")
+    )
     number: Mapped[str] = mapped_column(String(64))
     position: Mapped[int] = mapped_column(Integer(), default=0)
     title: Mapped[str] = mapped_column(String(500))

@@ -860,6 +860,7 @@ def protocol_editor(
     request: Request,
     db: Session = Depends(get_db),
     filter: str = "all",
+    q: str = "",
 ):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
@@ -881,6 +882,9 @@ def protocol_editor(
     }
     if filter in filters:
         rows = [row for row in rows if filters[filter](row)]
+    if q.strip():
+        query = q.strip().casefold()
+        rows = [row for row in rows if query in row[0].title.casefold()]
     return templates.TemplateResponse(
         request,
         "protocol_editor.html",
@@ -902,6 +906,7 @@ def protocol_editor(
                 select(ParticipantGroupTemplate).order_by(ParticipantGroupTemplate.name)
             ).all(),
             current_filter=filter,
+            search_query=q,
             error_count=sum(bool(editor_errors(task)) for task in protocol.tasks),
         ),
     )
@@ -925,10 +930,15 @@ def save_protocol_editor(
         section = sections.get(int(section_data["id"]))
         if section:
             section.title = section_data["title"].strip() or section.title
+            if "sort_order" in section_data:
+                section.sort_order = int(section_data["sort_order"])
     for task_data in payload.get("tasks", []):
         task = tasks.get(int(task_data["id"]))
         if task:
-            apply_task_data(db, task, task_data)
+            try:
+                apply_task_data(db, task, task_data)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             if "position" in task_data:
                 task.position = int(task_data["position"])
     db.commit()
@@ -1070,6 +1080,22 @@ def add_editor_section(protocol_id: int, payload: dict = Body(...), db: Session 
     db.add(section)
     db.commit()
     return {"id": section.id}
+
+
+@app.delete("/protocols/{protocol_id}/editor/sections/{section_id}")
+def delete_editor_section(
+    protocol_id: int, section_id: int, db: Session = Depends(get_db)
+):
+    section = db.get(ProtocolSection, section_id)
+    if not section or section.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Раздел не найден")
+    for task in db.scalars(
+        select(ProtocolTask).where(ProtocolTask.section_id == section_id)
+    ).all():
+        task.section_id = None
+    db.delete(section)
+    db.commit()
+    return {"deleted": True}
 
 
 @app.post("/protocols/{protocol_id}/editor/bulk")
