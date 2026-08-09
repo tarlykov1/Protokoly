@@ -537,6 +537,8 @@ from app.services.protocols.participants import (
     copy_template,
     create_group,
     replace_members,
+    save_group_as_template,
+    selected_groups,
 )
 from app.services.tasks.gateway import Bitrix24RestGateway, BitrixAPIError, get_bitrix_gateway
 from app.services.tasks.publication import PublicationNotAllowedError, PublicationService
@@ -1024,6 +1026,24 @@ def add_group_from_template(protocol_id: int, template_id: int, db: Session = De
     return {"id": group.id}
 
 
+@app.post("/protocols/{protocol_id}/participant-groups/{group_id}/save-template")
+def save_participant_template(
+    protocol_id: int, group_id: int, payload: dict = Body(default={}), db: Session = Depends(get_db)
+):
+    group = db.get(ProtocolParticipantGroup, group_id)
+    if not group or group.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Список не найден")
+    try:
+        template = save_group_as_template(db, group, payload.get("name"))
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Шаблон с таким названием уже существует"
+        ) from exc
+    return {"id": template.id, "name": template.name}
+
+
 @app.post("/protocols/{protocol_id}/editor/tasks")
 def add_editor_task(
     protocol_id: int, payload: dict = Body(default={}), db: Session = Depends(get_db)
@@ -1091,15 +1111,11 @@ def add_editor_section(protocol_id: int, payload: dict = Body(...), db: Session 
 
 
 @app.delete("/protocols/{protocol_id}/editor/sections/{section_id}")
-def delete_editor_section(
-    protocol_id: int, section_id: int, db: Session = Depends(get_db)
-):
+def delete_editor_section(protocol_id: int, section_id: int, db: Session = Depends(get_db)):
     section = db.get(ProtocolSection, section_id)
     if not section or section.protocol_id != protocol_id:
         raise HTTPException(status_code=404, detail="Раздел не найден")
-    for task in db.scalars(
-        select(ProtocolTask).where(ProtocolTask.section_id == section_id)
-    ).all():
+    for task in db.scalars(select(ProtocolTask).where(ProtocolTask.section_id == section_id)).all():
         task.section_id = None
     db.delete(section)
     db.commit()
@@ -1189,6 +1205,17 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
         assignee_counts[planned.responsible_name] = (
             assignee_counts.get(planned.responsible_name, 0) + 1
         )
+    group_breakdown = [
+        (
+            task,
+            [
+                (group.name, [member.name_snapshot for member in group.members])
+                for group in selected_groups(db, task)
+            ],
+        )
+        for task in p.tasks
+        if selected_groups(db, task)
+    ]
     section_count = (
         db.scalar(
             select(func.count())
@@ -1208,6 +1235,7 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
             "demo_mode": get_settings().demo_mode,
             "links": links,
             "assignee_counts": assignee_counts,
+            "group_breakdown": group_breakdown,
             "section_count": section_count,
         },
     )
@@ -1320,13 +1348,21 @@ def save_employee_source(
     source.provider_type = provider_type
     old_password = (source.parameters or {}).get("password", "")
     source.parameters = {
-        "db_type": db_type, "host": host.strip(), "database": database.strip(),
-        "schema": schema.strip(), "table": table.strip(), "id_field": id_field.strip(),
-        "name_field": name_field.strip(), "email_field": email_field.strip(),
-        "username": username.strip(), "password": password or old_password,
+        "db_type": db_type,
+        "host": host.strip(),
+        "database": database.strip(),
+        "schema": schema.strip(),
+        "table": table.strip(),
+        "id_field": id_field.strip(),
+        "name_field": name_field.strip(),
+        "email_field": email_field.strip(),
+        "username": username.strip(),
+        "password": password or old_password,
     }
     db.commit()
-    return RedirectResponse("/settings/integrations?message=Источник сотрудников сохранён", status_code=303)
+    return RedirectResponse(
+        "/settings/integrations?message=Источник сотрудников сохранён", status_code=303
+    )
 
 
 @app.post("/settings/integrations/employees/check")
@@ -1345,8 +1381,12 @@ def sync_employee_source(db: Session = Depends(get_db)):
         source.last_sync_status = "error"
         source.last_sync_message = str(exc)
         db.commit()
-        return RedirectResponse(f"/settings/integrations?error=Ошибка синхронизации: {exc}", status_code=303)
-    return RedirectResponse(f"/employees?message=Синхронизировано сотрудников: {count}", status_code=303)
+        return RedirectResponse(
+            f"/settings/integrations?error=Ошибка синхронизации: {exc}", status_code=303
+        )
+    return RedirectResponse(
+        f"/employees?message=Синхронизировано сотрудников: {count}", status_code=303
+    )
 
 
 @app.post("/settings/integrations/bitrix24")
@@ -1483,33 +1523,60 @@ def save_task(
 
 @app.get("/employees")
 def employees(
-    request: Request, db: Session = Depends(get_db), q: str = "",
-    source: str | None = None, department: str | None = None,
+    request: Request,
+    db: Session = Depends(get_db),
+    q: str = "",
+    source: str | None = None,
+    department: str | None = None,
 ):
     service = EmployeeDirectoryService(db)
     items = service.search(q, source, department)
     return templates.TemplateResponse(
         request,
         "employees.html",
-        common_context("Сотрудники", "Сотрудники", employees=items, q=q, source=source,
-            department=department, sources=db.scalars(select(Employee.source_system).distinct()).all(),
-            departments=db.scalars(select(Employee.department).where(Employee.department.is_not(None)).distinct()).all(),
-            message=request.query_params.get("message")),
+        common_context(
+            "Сотрудники",
+            "Сотрудники",
+            employees=items,
+            q=q,
+            source=source,
+            department=department,
+            sources=db.scalars(select(Employee.source_system).distinct()).all(),
+            departments=db.scalars(
+                select(Employee.department).where(Employee.department.is_not(None)).distinct()
+            ).all(),
+            message=request.query_params.get("message"),
+        ),
     )
 
 
 @app.get("/employees/new")
 def new_employee(request: Request):
-    return templates.TemplateResponse(request, "employee_form.html", common_context("Сотрудники", "Новый сотрудник", employee=None))
+    return templates.TemplateResponse(
+        request,
+        "employee_form.html",
+        common_context("Сотрудники", "Новый сотрудник", employee=None),
+    )
 
 
 @app.post("/employees")
-def create_employee(full_name: str = Form(...), position: str = Form(""), department: str = Form(""),
-    email: str = Form(""), bitrix_user_id: int | None = Form(None), source_system: str = Form("manual"),
-    db: Session = Depends(get_db)):
-    employee = EmployeeDirectoryService(db).create(full_name=full_name.strip(), position=position.strip() or None,
-        department=department.strip() or None, email=email.strip() or None, bitrix_user_id=bitrix_user_id,
-        source_system=source_system.strip() or "manual")
+def create_employee(
+    full_name: str = Form(...),
+    position: str = Form(""),
+    department: str = Form(""),
+    email: str = Form(""),
+    bitrix_user_id: int | None = Form(None),
+    source_system: str = Form("manual"),
+    db: Session = Depends(get_db),
+):
+    employee = EmployeeDirectoryService(db).create(
+        full_name=full_name.strip(),
+        position=position.strip() or None,
+        department=department.strip() or None,
+        email=email.strip() or None,
+        bitrix_user_id=bitrix_user_id,
+        source_system=source_system.strip() or "manual",
+    )
     return RedirectResponse(f"/employees/{employee.id}", status_code=303)
 
 
@@ -1518,7 +1585,11 @@ def employee_card(employee_id: int, request: Request, db: Session = Depends(get_
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
-    return templates.TemplateResponse(request, "employee_card.html", common_context("Сотрудники", employee.full_name, employee=employee))
+    return templates.TemplateResponse(
+        request,
+        "employee_card.html",
+        common_context("Сотрудники", employee.full_name, employee=employee),
+    )
 
 
 @app.get("/employees/{employee_id}/edit")
@@ -1526,19 +1597,36 @@ def edit_employee(employee_id: int, request: Request, db: Session = Depends(get_
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
-    return templates.TemplateResponse(request, "employee_form.html", common_context("Сотрудники", "Редактирование", employee=employee))
+    return templates.TemplateResponse(
+        request,
+        "employee_form.html",
+        common_context("Сотрудники", "Редактирование", employee=employee),
+    )
 
 
 @app.post("/employees/{employee_id}")
-def update_employee(employee_id: int, full_name: str = Form(...), position: str = Form(""), department: str = Form(""),
-    email: str = Form(""), bitrix_user_id: int | None = Form(None), source_system: str = Form("manual"),
-    db: Session = Depends(get_db)):
+def update_employee(
+    employee_id: int,
+    full_name: str = Form(...),
+    position: str = Form(""),
+    department: str = Form(""),
+    email: str = Form(""),
+    bitrix_user_id: int | None = Form(None),
+    source_system: str = Form("manual"),
+    db: Session = Depends(get_db),
+):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
-    EmployeeDirectoryService(db).update(employee, full_name=full_name.strip(), position=position.strip() or None,
-        department=department.strip() or None, email=email.strip() or None, bitrix_user_id=bitrix_user_id,
-        source_system=source_system.strip() or "manual")
+    EmployeeDirectoryService(db).update(
+        employee,
+        full_name=full_name.strip(),
+        position=position.strip() or None,
+        department=department.strip() or None,
+        email=email.strip() or None,
+        bitrix_user_id=bitrix_user_id,
+        source_system=source_system.strip() or "manual",
+    )
     return RedirectResponse(f"/employees/{employee.id}", status_code=303)
 
 
@@ -1551,7 +1639,9 @@ def delete_employee(employee_id: int, db: Session = Depends(get_db)):
         EmployeeDirectoryService(db).delete(employee)
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Сотрудник используется в протоколах или списках") from exc
+        raise HTTPException(
+            status_code=409, detail="Сотрудник используется в протоколах или списках"
+        ) from exc
     return RedirectResponse("/employees?message=Сотрудник удалён", status_code=303)
 
 
