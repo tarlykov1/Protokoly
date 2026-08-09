@@ -8,17 +8,27 @@
   };
   const value = (row, selector) => row.querySelector(selector).value;
   const serialize = () => ({
-    sections: [...document.querySelectorAll('.protocol-section')].map(section => { const body=section.querySelector('.section-body'); const title=section.querySelector('.section-title'); return title ? {id:body.dataset.sectionId,title:title.value} : null; }).filter(Boolean),
+    sections: [...document.querySelectorAll('.protocol-section[data-section-id]')].map((section, sort_order) => ({id:section.dataset.sectionId,title:section.querySelector('.section-title').value,sort_order})),
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
       description: value(row, '.task-description'), employee_ids: [...row.querySelector('.task-employees').selectedOptions].map(o => +o.value),
       participant_group_id: value(row, '.task-group') || null,
       deadline: value(row, '.task-deadline'), section_id: row.closest('.section-body')?.dataset.sectionId || value(row, '.task-section'), priority: value(row, '.task-priority'),
-      task_mode: value(row, '.task-mode'), position: rows().indexOf(row), is_controlled: row.querySelector('.task-controlled').checked
+      task_mode: value(row, '.task-mode'), parent_task_id: value(row, '.task-parent') || null, position: rows().indexOf(row), is_controlled: row.querySelector('.task-controlled').checked
     }))
   });
   const message = (text, error = false) => { const box = document.querySelector('#editor-message'); box.textContent = text; box.className = `alert ${error ? 'alert-danger' : 'alert-success'}`; };
-  document.querySelector('#save-editor').addEventListener('click', async () => { try { await request(`/protocols/${id}/editor/save`, {method:'POST', body:JSON.stringify(serialize())}); message('Изменения сохранены'); } catch(e) { message(e.message, true); } });
+  const status = document.querySelector('#save-status');
+  let saveTimer; let savePromise = Promise.resolve();
+  const save = () => {
+    clearTimeout(saveTimer); status.textContent = 'Сохранение…'; status.className = 'save-status is-saving';
+    savePromise = request(`/protocols/${id}/editor/save`, {method:'POST', body:JSON.stringify(serialize())})
+      .then(() => { rows().forEach(row => row.classList.remove('is-dirty')); status.textContent = 'Все изменения сохранены'; status.className = 'save-status is-saved'; })
+      .catch(e => { status.textContent = 'Не удалось сохранить'; status.className = 'save-status is-error'; message(e.message, true); throw e; });
+    return savePromise;
+  };
+  const scheduleSave = () => { clearTimeout(saveTimer); status.textContent = 'Есть несохранённые изменения'; status.className = 'save-status is-dirty'; saveTimer = setTimeout(save, 600); };
+  document.querySelector('#save-editor').addEventListener('click', save);
   document.querySelector('#select-all').addEventListener('change', e => { rows().forEach(row => row.querySelector('.task-select').checked = e.target.checked); updateCount(); });
   document.addEventListener('change', e => { if (e.target.matches('.task-select')) updateCount(); });
   const updateCount = () => document.querySelector('#selected-count').textContent = document.querySelectorAll('.task-select:checked').length;
@@ -28,7 +38,7 @@
     const changes = {}; [['employee_id','#bulk-employee'],['deadline','#bulk-deadline'],['section_id','#bulk-section'],['task_mode','#bulk-mode']].forEach(([key, selector]) => { const val = document.querySelector(selector).value; if (val) changes[key] = val; });
     await request(`/protocols/${id}/editor/bulk`, {method:'POST', body:JSON.stringify({task_ids, changes})}); location.reload();
   });
-  document.querySelector('#add-task').addEventListener('click', async () => { await request(`/protocols/${id}/editor/tasks`, {method:'POST', body:'{}'}); location.reload(); });
+  document.querySelector('#add-task').addEventListener('click', async () => { clearTimeout(saveTimer); await save(); await request(`/protocols/${id}/editor/tasks`, {method:'POST', body:'{}'}); location.reload(); });
   document.querySelector('#add-section').addEventListener('click', async () => { const title = prompt('Название раздела'); if (title) { await request(`/protocols/${id}/editor/sections`, {method:'POST', body:JSON.stringify({title})}); location.reload(); } });
   document.querySelector('#add-participant-group')?.addEventListener('click', async () => { const name=prompt('Название списка'); if(name){await request(`/protocols/${id}/participant-groups`,{method:'POST',body:JSON.stringify({name})});location.reload();} });
   document.querySelector('#participant-template')?.addEventListener('change', async e => { if(e.target.value){await request(`/protocols/${id}/participant-groups/from-template/${e.target.value}`,{method:'POST'});location.reload();} });
@@ -38,6 +48,8 @@
     if(e.target.closest('.edit-participant-group')){const raw=prompt('ID сотрудников через запятую');if(raw!==null){await request(`/protocols/${id}/participant-groups/${gid}`,{method:'PUT',body:JSON.stringify({employee_ids:raw.split(',').map(v=>v.trim()).filter(Boolean)})});location.reload();}}
   }));
   document.addEventListener('click', async e => {
+    const section = e.target.closest('.protocol-section[data-section-id]');
+    if (section && e.target.closest('.delete-section') && confirm('Удалить раздел? Поручения останутся без раздела.')) { await request(`/protocols/${id}/editor/sections/${section.dataset.sectionId}`, {method:'DELETE'}); location.reload(); return; }
     const row = e.target.closest('.task-row'); if (!row) return;
     if (e.target.closest('.delete-task') && confirm('Удалить поручение?')) { await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}`, {method:'DELETE'}); row.remove(); }
     if (e.target.closest('.duplicate-task')) { await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/duplicate`, {method:'POST'}); location.reload(); }
@@ -45,7 +57,8 @@
   });
   const renumber = () => rows().forEach((row, index) => { row.querySelector('.task-number').value = String(index + 1); row.classList.add('is-dirty'); });
   const markDirty = target => target.closest('.task-row')?.classList.add('is-dirty');
-  document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); });
+  document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); if (e.target.matches('.task-row input,.task-row textarea,.section-title')) scheduleSave(); if (e.target.matches('.parent-task-search')) { const query=e.target.value.toLowerCase(); [...e.target.closest('.parent-task-field').querySelector('.task-parent').options].forEach((option,index) => { if(index) option.hidden=!option.text.toLowerCase().includes(query); }); } });
+  document.addEventListener('change', e => { if (e.target.matches('.task-row select,.task-row input')) scheduleSave(); if (e.target.matches('.task-mode')) e.target.closest('.task-content').querySelector('.parent-task-field').classList.toggle('d-none', e.target.value !== 'subtasks'); });
   const syncSectionSelects = () => {
     document.querySelectorAll('.section-body').forEach(body => {
       body.querySelectorAll('.task-section').forEach(select => { select.value = body.dataset.sectionId; });
@@ -55,9 +68,10 @@
     document.querySelectorAll('.section-body').forEach(body => {
       new Sortable(body, {
         group: 'protocol-tasks', handle: '.drag-handle', draggable: '.task-row', animation: 150,
-        ghostClass: 'sortable-ghost', chosenClass: 'sortable-chosen', dragClass: 'dragging', onStart: () => body.classList.add('drop-active'), onEnd: () => { document.querySelectorAll('.section-body').forEach(item => item.classList.remove('drop-active')); syncSectionSelects(); renumber(); message('Порядок изменён — сохраните редактор'); }
+        ghostClass: 'sortable-ghost', chosenClass: 'sortable-chosen', dragClass: 'dragging', onStart: () => body.classList.add('drop-active'), onEnd: () => { document.querySelectorAll('.section-body').forEach(item => item.classList.remove('drop-active')); syncSectionSelects(); renumber(); scheduleSave(); }
       });
     });
+    new Sortable(document.querySelector('.editor-sections'), {handle:'.section-handle', draggable:'.protocol-section[data-section-id]', animation:150, onEnd:scheduleSave});
   } else {
     let dragged = null;
     document.addEventListener('dragstart', e => {

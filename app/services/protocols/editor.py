@@ -42,6 +42,14 @@ def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask
         task.create_as_subtasks = bool(data["create_as_subtasks"])
     if "is_controlled" in data:
         task.is_controlled = bool(data["is_controlled"])
+    if "parent_task_id" in data:
+        parent_id = int(data["parent_task_id"]) if data["parent_task_id"] else None
+        parent = db.get(ProtocolTask, parent_id) if parent_id else None
+        if parent_id and (
+            not parent or parent.protocol_id != task.protocol_id or parent.id == task.id
+        ):
+            raise ValueError("Родительское поручение не найдено")
+        task.parent_task_id = parent_id if task.create_as_subtasks else None
     if "employee_ids" in data:
         for assignment in list(task.assignments):
             db.delete(assignment)
