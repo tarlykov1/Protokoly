@@ -51,6 +51,19 @@ class IntegrationLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class EmployeeSourceSettings(TimestampMixin, Base):
+    """Configuration of the employee directory's active provider."""
+
+    __tablename__ = "employee_source_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_type: Mapped[str] = mapped_column(String(32), default="manual")
+    enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
+    parameters: Mapped[dict] = mapped_column(JSON(), default=dict)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_status: Mapped[str | None] = mapped_column(String(32))
+    last_sync_message: Mapped[str | None] = mapped_column(Text())
+
+
 class Project(TimestampMixin, Base):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -91,6 +104,8 @@ class Employee(TimestampMixin, Base):
     __tablename__ = "employees"
     id: Mapped[int] = mapped_column(primary_key=True)
     full_name: Mapped[str] = mapped_column(String(255))
+    position: Mapped[str | None] = mapped_column(String(255))
+    department: Mapped[str | None] = mapped_column(String(255))
     last_name: Mapped[str | None] = mapped_column(String(100))
     first_name: Mapped[str | None] = mapped_column(String(100))
     middle_name: Mapped[str | None] = mapped_column(String(100))

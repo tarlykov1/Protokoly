@@ -5,6 +5,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models.domain import ImportSession, Project, Protocol, ProtocolTask
@@ -506,6 +507,7 @@ from app.core.config import get_settings
 from app.db.models.domain import (
     Employee,
     EmployeeList,
+    EmployeeSourceSettings,
     IntegrationLog,
     IntegrationSettings,
     ParticipantGroupTemplate,
@@ -523,6 +525,12 @@ from app.services.demo_publication import (
     run_publication,
     save_assessment,
     validate_task,
+)
+from app.services.employees import (
+    BitrixEmployeeProvider,
+    DatabaseEmployeeProvider,
+    EmployeeDirectoryService,
+    ManualEmployeeProvider,
 )
 from app.services.protocols.participants import (
     copy_members,
@@ -1233,6 +1241,12 @@ def _bitrix_settings(db: Session) -> IntegrationSettings:
 
 @app.get("/settings/integrations")
 def integration_settings_page(request: Request, db: Session = Depends(get_db)):
+    employee_source = db.scalar(select(EmployeeSourceSettings).order_by(EmployeeSourceSettings.id))
+    if employee_source is None:
+        employee_source = EmployeeSourceSettings(provider_type="manual", parameters={})
+        db.add(employee_source)
+        db.commit()
+        db.refresh(employee_source)
     return templates.TemplateResponse(
         request,
         "integration_settings.html",
@@ -1240,6 +1254,7 @@ def integration_settings_page(request: Request, db: Session = Depends(get_db)):
             "Интеграции",
             "Настройки / Интеграции",
             settings=_bitrix_settings(db),
+            employee_source=employee_source,
             logs=db.scalars(
                 select(IntegrationLog).order_by(IntegrationLog.id.desc()).limit(20)
             ).all(),
@@ -1247,6 +1262,91 @@ def integration_settings_page(request: Request, db: Session = Depends(get_db)):
             error=request.query_params.get("error"),
         ),
     )
+
+
+def _employee_source(db: Session) -> EmployeeSourceSettings:
+    source = db.scalar(select(EmployeeSourceSettings).order_by(EmployeeSourceSettings.id))
+    if source is None:
+        source = EmployeeSourceSettings(provider_type="manual", parameters={})
+        db.add(source)
+        db.commit()
+        db.refresh(source)
+    return source
+
+
+def _configured_employee_provider(db: Session):
+    source = _employee_source(db)
+    parameters = source.parameters or {}
+    if source.provider_type == "manual":
+        return ManualEmployeeProvider()
+    if source.provider_type == "database":
+        db_type = parameters.get("db_type", "postgresql")
+        if db_type == "sqlite":
+            url = f"sqlite:///{parameters.get('database', '')}"
+        else:
+            from urllib.parse import quote_plus
+
+            user = quote_plus(parameters.get("username", ""))
+            password = quote_plus(parameters.get("password", ""))
+            credentials = f"{user}:{password}@" if user else ""
+            driver = "postgresql+psycopg" if db_type == "postgresql" else db_type
+            url = f"{driver}://{credentials}{parameters.get('host', '')}/{parameters.get('database', '')}"
+        return DatabaseEmployeeProvider(url, parameters)
+    if source.provider_type == "bitrix":
+        settings = _bitrix_settings(db)
+        gateway = Bitrix24RestGateway(settings, db)
+        return BitrixEmployeeProvider(gateway.list_users)
+    raise ValueError("Неизвестный источник сотрудников")
+
+
+@app.post("/settings/integrations/employees")
+def save_employee_source(
+    provider_type: str = Form(...),
+    db_type: str = Form("postgresql"),
+    host: str = Form(""),
+    database: str = Form(""),
+    schema: str = Form(""),
+    table: str = Form(""),
+    id_field: str = Form("id"),
+    name_field: str = Form("full_name"),
+    email_field: str = Form("email"),
+    username: str = Form(""),
+    password: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    if provider_type not in {"manual", "database", "bitrix"}:
+        raise HTTPException(status_code=422, detail="Неизвестный тип источника")
+    source = _employee_source(db)
+    source.provider_type = provider_type
+    old_password = (source.parameters or {}).get("password", "")
+    source.parameters = {
+        "db_type": db_type, "host": host.strip(), "database": database.strip(),
+        "schema": schema.strip(), "table": table.strip(), "id_field": id_field.strip(),
+        "name_field": name_field.strip(), "email_field": email_field.strip(),
+        "username": username.strip(), "password": password or old_password,
+    }
+    db.commit()
+    return RedirectResponse("/settings/integrations?message=Источник сотрудников сохранён", status_code=303)
+
+
+@app.post("/settings/integrations/employees/check")
+def check_employee_source(db: Session = Depends(get_db)):
+    ok, message = _configured_employee_provider(db).test_connection()
+    key = "message" if ok else "error"
+    return RedirectResponse(f"/settings/integrations?{key}={message}", status_code=303)
+
+
+@app.post("/settings/integrations/employees/sync")
+def sync_employee_source(db: Session = Depends(get_db)):
+    source = _employee_source(db)
+    try:
+        count = EmployeeDirectoryService(db).sync(_configured_employee_provider(db), source)
+    except Exception as exc:
+        source.last_sync_status = "error"
+        source.last_sync_message = str(exc)
+        db.commit()
+        return RedirectResponse(f"/settings/integrations?error=Ошибка синхронизации: {exc}", status_code=303)
+    return RedirectResponse(f"/employees?message=Синхронизировано сотрудников: {count}", status_code=303)
 
 
 @app.post("/settings/integrations/bitrix24")
@@ -1382,17 +1482,77 @@ def save_task(
 
 
 @app.get("/employees")
-def employees(request: Request, db: Session = Depends(get_db)):
+def employees(
+    request: Request, db: Session = Depends(get_db), q: str = "",
+    source: str | None = None, department: str | None = None,
+):
+    service = EmployeeDirectoryService(db)
+    items = service.search(q, source, department)
     return templates.TemplateResponse(
         request,
-        "simple_list.html",
-        {
-            "title": "Сотрудники",
-            "items": [
-                e.full_name for e in db.scalars(select(Employee).order_by(Employee.full_name)).all()
-            ],
-        },
+        "employees.html",
+        common_context("Сотрудники", "Сотрудники", employees=items, q=q, source=source,
+            department=department, sources=db.scalars(select(Employee.source_system).distinct()).all(),
+            departments=db.scalars(select(Employee.department).where(Employee.department.is_not(None)).distinct()).all(),
+            message=request.query_params.get("message")),
     )
+
+
+@app.get("/employees/new")
+def new_employee(request: Request):
+    return templates.TemplateResponse(request, "employee_form.html", common_context("Сотрудники", "Новый сотрудник", employee=None))
+
+
+@app.post("/employees")
+def create_employee(full_name: str = Form(...), position: str = Form(""), department: str = Form(""),
+    email: str = Form(""), bitrix_user_id: int | None = Form(None), source_system: str = Form("manual"),
+    db: Session = Depends(get_db)):
+    employee = EmployeeDirectoryService(db).create(full_name=full_name.strip(), position=position.strip() or None,
+        department=department.strip() or None, email=email.strip() or None, bitrix_user_id=bitrix_user_id,
+        source_system=source_system.strip() or "manual")
+    return RedirectResponse(f"/employees/{employee.id}", status_code=303)
+
+
+@app.get("/employees/{employee_id}")
+def employee_card(employee_id: int, request: Request, db: Session = Depends(get_db)):
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    return templates.TemplateResponse(request, "employee_card.html", common_context("Сотрудники", employee.full_name, employee=employee))
+
+
+@app.get("/employees/{employee_id}/edit")
+def edit_employee(employee_id: int, request: Request, db: Session = Depends(get_db)):
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    return templates.TemplateResponse(request, "employee_form.html", common_context("Сотрудники", "Редактирование", employee=employee))
+
+
+@app.post("/employees/{employee_id}")
+def update_employee(employee_id: int, full_name: str = Form(...), position: str = Form(""), department: str = Form(""),
+    email: str = Form(""), bitrix_user_id: int | None = Form(None), source_system: str = Form("manual"),
+    db: Session = Depends(get_db)):
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    EmployeeDirectoryService(db).update(employee, full_name=full_name.strip(), position=position.strip() or None,
+        department=department.strip() or None, email=email.strip() or None, bitrix_user_id=bitrix_user_id,
+        source_system=source_system.strip() or "manual")
+    return RedirectResponse(f"/employees/{employee.id}", status_code=303)
+
+
+@app.post("/employees/{employee_id}/delete")
+def delete_employee(employee_id: int, db: Session = Depends(get_db)):
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    try:
+        EmployeeDirectoryService(db).delete(employee)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Сотрудник используется в протоколах или списках") from exc
+    return RedirectResponse("/employees?message=Сотрудник удалён", status_code=303)
 
 
 @app.get("/employee-lists")
