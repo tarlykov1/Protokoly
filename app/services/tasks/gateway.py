@@ -1,3 +1,4 @@
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -5,6 +6,8 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.request_context import get_request_id
+from app.core.security import sanitize_payload
 from app.db.models.domain import IntegrationLog, IntegrationSettings
 
 
@@ -107,24 +110,38 @@ class Bitrix24RestGateway(TaskGateway):
 
     def _call(self, method: str, payload: dict[str, Any] | None = None) -> Any:
         payload = payload or {}
-        log = IntegrationLog(operation=method, request=payload, status="pending")
+        log = IntegrationLog(operation=method, request=sanitize_payload(payload), status="pending", request_id=get_request_id())
         self.db.add(log)
-        try:
-            response = self.client.post(f"{self._base_url()}/{method}.json", json=payload)
-            response.raise_for_status()
-            body = response.json()
-            if body.get("error"):
-                raise BitrixAPIError(body.get("error_description") or body["error"])
-            log.response = body
-            log.status = "success"
-            self.db.commit()
-            return body.get("result")
-        except Exception as exc:
-            error = exc if isinstance(exc, BitrixAPIError) else BitrixAPIError(str(exc))
-            log.response = {"error": str(error)}
-            log.status = "error"
-            self.db.commit()
-            raise error from exc
+        for attempt in range(1, 4):
+            log.attempts = attempt
+            cause = None
+            try:
+                response = self.client.post(f"{self._base_url()}/{method}.json", json=payload)
+                response.raise_for_status()
+                body = response.json()
+                if body.get("error"):
+                    raise BitrixAPIError(body.get("error_description") or body["error"])
+                log.response = sanitize_payload(body)
+                log.status = "success"
+                self.db.commit()
+                return body.get("result")
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                cause = exc
+                retryable, error = True, BitrixAPIError("Bitrix24 временно недоступен")
+            except httpx.HTTPStatusError as exc:
+                cause = exc
+                retryable = exc.response.status_code in {429, 502, 503, 504}
+                error = BitrixAPIError(f"Bitrix24 вернул HTTP {exc.response.status_code}")
+            except BitrixAPIError as exc:
+                cause = exc
+                retryable, error = False, exc
+            if retryable and attempt < 3:
+                time.sleep((0.5, 1.0, 2.0)[attempt - 1])
+            else:
+                log.response = sanitize_payload({"error": str(error)})
+                log.status = "error"
+                self.db.commit()
+                raise error from cause
 
     def check_connection(self) -> dict[str, Any]:
         result = self._call("user.current")

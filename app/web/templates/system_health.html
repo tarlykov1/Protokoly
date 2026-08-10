@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<h1 class="h2">Состояние системы</h1><p class="text-muted">Готовность сервисов к работе без раскрытия технических секретов.</p>
+<div class="row g-3">{% for key, title in [('application','Система'),('database','База данных'),('bitrix24','Bitrix24'),('employees','Сотрудники'),('issues','Очередь проблем')] %}{% set item=snapshot[key] %}
+<div class="col-md-6"><article class="card shadow-sm h-100"><div class="card-body"><div class="d-flex justify-content-between"><h2 class="h5">{{ title }}</h2><span class="badge {% if item.status=='healthy' %}text-bg-success{% elif item.status=='warning' %}text-bg-warning{% else %}text-bg-danger{% endif %}">{{ item.status }}</span></div>
+<dl class="row small mb-0 mt-3">{% for name,value in item.items() if name!='status' %}<dt class="col-6 text-muted">{{ name|replace('_',' ') }}</dt><dd class="col-6 text-break">{{ value if value is not none else '—' }}</dd>{% endfor %}</dl></div></article></div>{% endfor %}</div>{% endblock %}

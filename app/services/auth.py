@@ -59,3 +59,10 @@ def require(permission: Permission):
         return user
 
     return dependency
+
+
+def require_admin(request: Request) -> CurrentUser:
+    user = current_user(request)
+    if user.role is not Role.ADMIN:
+        raise HTTPException(403, "Раздел доступен только администратору")
+    return user
