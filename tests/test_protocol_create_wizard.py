@@ -125,6 +125,27 @@ def test_manual_wizard_creates_and_reloads_complete_protocol():
     assert reloaded.status_code == 200
     assert "Полностью ручной протокол" in reloaded.text
 
+    local_group = db_session.scalar(
+        select(ProtocolParticipantGroup).where(
+            ProtocolParticipantGroup.protocol_id == protocol_id,
+            ProtocolParticipantGroup.name == "Список 1",
+        )
+    )
+    copied = client.post(
+        f"/protocols/{protocol_id}/participant-groups/{local_group.id}/duplicate"
+    )
+    assert copied.status_code == 200
+    assert copied.json()["name"] == "Список 1 — копия"
+    renamed = client.put(
+        f"/protocols/{protocol_id}/participant-groups/{copied.json()['id']}",
+        json={"name": "Рабочая группа", "employee_ids": [employees[1].id]},
+    )
+    assert renamed.status_code == 200
+    db_session.expire_all()
+    changed_group = db_session.get(ProtocolParticipantGroup, copied.json()["id"])
+    assert changed_group.name == "Рабочая группа"
+    assert [member.employee_id for member in changed_group.members] == [employees[1].id]
+
 
 def test_workflow_action_bar_only_shows_current_actions():
     Base.metadata.create_all(engine)
@@ -141,3 +162,29 @@ def test_workflow_action_bar_only_shows_current_actions():
     action_bar = page.split('data-testid="action-bar"', 1)[1].split("</header>", 1)[0]
     assert "Редактировать" in action_bar and "Отправить на проверку" in action_bar
     assert "Утвердить" not in action_bar and "Контроль исполнения" not in action_bar
+
+
+def test_editor_renders_searchable_assignee_selector_and_participant_list_actions():
+    Base.metadata.create_all(engine)
+    client = TestClient(app)
+    with SessionLocal() as db:
+        project = Project(name="Enterprise editor", code="WIZ-SELECTOR")
+        employee = Employee(full_name="Мария Соколова")
+        db.add_all([project, employee])
+        db.flush()
+        protocol = Protocol(project_id=project.id, title="Selector", status="draft")
+        db.add(protocol)
+        db.flush()
+        task = ProtocolTask(protocol_id=protocol.id, number="1", title="Поручение")
+        db.add(task)
+        db.commit()
+        protocol_id = protocol.id
+
+    page = client.get(f"/protocols/{protocol_id}/editor")
+    assert page.status_code == 200
+    assert 'class="task-employees form-select" multiple' in page.text
+    assert 'class="duplicate-participant-group' in page.text
+    assert 'id="edit-group-name"' in page.text
+    selector_script = client.get("/static/js/protocol-editor.js").text
+    assert "mountMultiSelector" in selector_script
+    assert "selector-chip" in selector_script

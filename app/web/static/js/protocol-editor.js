@@ -37,6 +37,23 @@
     [...row.querySelector('.task-groups').selectedOptions].forEach(option => (option.dataset.memberIds || '').split(',').filter(Boolean).forEach(id => ids.add(id)));
     row.querySelector('.task-assignee-count').textContent = `${ids.size} исполнителей`;
   };
+  const mountMultiSelector = select => {
+    const shell = document.createElement('div'); shell.className = 'search-multiselect';
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'multiselect-trigger'; button.setAttribute('aria-expanded', 'false');
+    const panel = document.createElement('div'); panel.className = 'multiselect-panel'; panel.hidden = true;
+    const search = document.createElement('input'); search.type = 'search'; search.className = 'form-control'; search.placeholder = 'Поиск…';
+    const options = document.createElement('div'); options.className = 'multiselect-options'; panel.append(search, options); shell.append(button, panel); select.after(shell); select.hidden = true;
+    const render = () => {
+      const selected = [...select.selectedOptions];
+      button.innerHTML = selected.length ? selected.map(option => `<span class="selector-chip">${option.textContent.replace(/ \(\d+\)$/, '')}</span>`).join('') : '<span class="muted">Выберите…</span>';
+      options.innerHTML = [...select.options].map(option => `<label data-label="${option.textContent.toLowerCase()}"><input type="checkbox" value="${option.value}" ${option.selected ? 'checked' : ''}> <span>${option.textContent}</span></label>`).join('');
+    };
+    button.addEventListener('click', () => { panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden) search.focus(); });
+    search.addEventListener('input', () => options.querySelectorAll('label').forEach(label => label.hidden = !label.dataset.label.includes(search.value.toLowerCase())));
+    options.addEventListener('change', event => { const option = [...select.options].find(item => item.value === event.target.value); option.selected = event.target.checked; select.dispatchEvent(new Event('change', {bubbles:true})); render(); });
+    document.addEventListener('click', event => { if (!shell.contains(event.target)) { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); } }); render();
+  };
+  document.querySelectorAll('.task-employees, .task-groups').forEach(mountMultiSelector);
   rows().forEach(updateAssigneeCount);
   document.querySelector('#bulk-apply').addEventListener('click', async () => {
     const task_ids = [...document.querySelectorAll('.task-select:checked')].map(input => +input.closest('.task-row').dataset.taskId);
@@ -53,12 +70,13 @@
   });
   document.querySelector('#participant-template')?.addEventListener('change', async e => { if(e.target.value){await request(`/protocols/${id}/participant-groups/from-template/${e.target.value}`,{method:'POST'});location.reload();} });
   document.querySelectorAll('.participant-card').forEach(card => card.addEventListener('click', async e => { const gid=card.dataset.groupId;
+    if(e.target.closest('.duplicate-participant-group')){await request(`/protocols/${id}/participant-groups/${gid}/duplicate`,{method:'POST'});location.reload();}
     if(e.target.closest('.delete-participant-group')&&confirm('Удалить список?')){await request(`/protocols/${id}/participant-groups/${gid}`,{method:'DELETE'});location.reload();}
     if(e.target.closest('.save-participant-template')){const name=prompt('Название сохранённого списка');if(name){await request(`/protocols/${id}/participant-groups/${gid}/save-template`,{method:'POST',body:JSON.stringify({name})});location.reload();}}
     if(e.target.closest('.copy-attendees')){await request(`/protocols/${id}/participant-groups/${gid}/copy-attendees`,{method:'POST'});location.reload();}
-    if(e.target.closest('.edit-participant-group')){const form=document.querySelector('#edit-group-form');form.dataset.groupId=gid;const selected=new Set([...card.querySelectorAll('[data-employee-id]')].map(item=>item.dataset.employeeId));form.querySelectorAll('.group-employee').forEach(input=>input.checked=selected.has(input.value));document.querySelector('#group-member-count').textContent=`${selected.size} участников`;bootstrap.Modal.getOrCreateInstance('#edit-group-modal').show();}
+    if(e.target.closest('.edit-participant-group')){const form=document.querySelector('#edit-group-form');form.dataset.groupId=gid;form.querySelector('#edit-group-name').value=card.dataset.groupName;const selected=new Set([...card.querySelectorAll('[data-employee-id]')].map(item=>item.dataset.employeeId));form.querySelectorAll('.group-employee').forEach(input=>input.checked=selected.has(input.value));document.querySelector('#group-member-count').textContent=`${selected.size} участников`;bootstrap.Modal.getOrCreateInstance('#edit-group-modal').show();}
   }));
-  document.querySelector('#edit-group-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget;await request(`/protocols/${id}/participant-groups/${form.dataset.groupId}`,{method:'PUT',body:JSON.stringify({employee_ids:[...form.querySelectorAll('.group-employee:checked')].map(input=>+input.value)})});location.reload();});
+  document.querySelector('#edit-group-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget;await request(`/protocols/${id}/participant-groups/${form.dataset.groupId}`,{method:'PUT',body:JSON.stringify({name:form.querySelector('#edit-group-name').value,employee_ids:[...form.querySelectorAll('.group-employee:checked')].map(input=>+input.value)})});location.reload();});
   document.querySelector('#group-employee-search')?.addEventListener('input',e=>{const query=e.target.value.toLowerCase();document.querySelectorAll('.employee-option').forEach(row=>row.classList.toggle('d-none',!row.textContent.toLowerCase().includes(query)));});
   document.querySelector('#add-manual-member')?.addEventListener('click',async()=>{const form=document.querySelector('#edit-group-form');const full_name=document.querySelector('#manual-full-name').value;if(!full_name)return message('Укажите ФИО',true);await request(`/protocols/${id}/participant-groups/${form.dataset.groupId}/manual-member`,{method:'POST',body:JSON.stringify({full_name,position:document.querySelector('#manual-position').value,department:document.querySelector('#manual-department').value})});location.reload();});
   document.addEventListener('click', async e => {
