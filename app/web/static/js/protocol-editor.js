@@ -8,6 +8,15 @@
   };
   const value = (row, selector) => row.querySelector(selector).value;
   const serialize = () => ({
+    protocol: {
+      title: document.querySelector('#protocol-title').value,
+      number: document.querySelector('#protocol-number').value,
+      meeting_date: document.querySelector('#protocol-meeting-date').value,
+      initiator: document.querySelector('#protocol-initiator').value,
+      responsible: document.querySelector('#protocol-responsible').value,
+      participants: document.querySelector('#protocol-participants').value,
+      description: document.querySelector('#protocol-description').value
+    },
     sections: [...document.querySelectorAll('.protocol-section[data-section-id]')].map((section, sort_order) => ({id:section.dataset.sectionId,title:section.querySelector('.section-title').value,sort_order})),
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
@@ -29,6 +38,16 @@
   };
   const scheduleSave = () => { clearTimeout(saveTimer); status.textContent = 'Есть несохранённые изменения'; status.className = 'save-status is-dirty'; saveTimer = setTimeout(save, 600); };
   document.querySelector('#save-editor').addEventListener('click', save);
+  document.querySelector('#close-editor').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await save();
+      window.location.assign(button.dataset.closeUrl);
+    } catch (_) {
+      button.disabled = false;
+    }
+  });
   document.querySelector('#select-all').addEventListener('change', e => { rows().forEach(row => row.querySelector('.task-select').checked = e.target.checked); updateCount(); });
   document.addEventListener('change', e => { if (e.target.matches('.task-select')) updateCount(); });
   const updateCount = () => document.querySelector('#selected-count').textContent = document.querySelectorAll('.task-select:checked').length;
@@ -42,15 +61,28 @@
     const button = document.createElement('button'); button.type = 'button'; button.className = 'multiselect-trigger'; button.setAttribute('aria-expanded', 'false');
     const panel = document.createElement('div'); panel.className = 'multiselect-panel'; panel.hidden = true;
     const search = document.createElement('input'); search.type = 'search'; search.className = 'form-control'; search.placeholder = 'Поиск…';
-    const options = document.createElement('div'); options.className = 'multiselect-options'; panel.append(search, options); shell.append(button, panel); select.after(shell); select.hidden = true;
+    const bulk = document.createElement('div'); bulk.className = 'multiselect-bulk-actions';
+    const selectAll = document.createElement('button'); selectAll.type = 'button'; selectAll.className = 'btn btn-sm btn-link select-filtered'; selectAll.textContent = select.classList.contains('task-groups') ? 'Выбрать все списки' : 'Выбрать всех';
+    const clearAll = document.createElement('button'); clearAll.type = 'button'; clearAll.className = 'btn btn-sm btn-link clear-selection'; clearAll.textContent = select.classList.contains('task-groups') ? 'Снять все' : 'Снять всех';
+    bulk.append(selectAll, clearAll);
+    const options = document.createElement('div'); options.className = 'multiselect-options'; panel.append(search, bulk, options); shell.append(button, panel); select.after(shell); select.hidden = true;
+    let expandedChips = false;
+    const filteredOptions = () => [...select.options].filter(option => option.textContent.toLowerCase().includes(search.value.trim().toLowerCase()));
     const render = () => {
       const selected = [...select.selectedOptions];
-      button.innerHTML = selected.length ? selected.map(option => `<span class="selector-chip">${option.textContent.replace(/ \(\d+\)$/, '')}</span>`).join('') : '<span class="muted">Выберите…</span>';
+      button.replaceChildren();
+      if (!selected.length) { const placeholder = document.createElement('span'); placeholder.className = 'muted'; placeholder.textContent = 'Выберите…'; button.append(placeholder); }
+      const visible = expandedChips ? selected : selected.slice(0, 3);
+      visible.forEach(option => { const chip = document.createElement('span'); chip.className = 'selector-chip'; chip.textContent = option.textContent.replace(/ \(\d+\)$/, ''); button.append(chip); });
+      if (!expandedChips && selected.length > 3) { const more = document.createElement('span'); more.className = 'selector-chip selector-chip-more'; more.textContent = `+${selected.length - 3}`; button.append(more); }
       options.innerHTML = [...select.options].map(option => `<label data-label="${option.textContent.toLowerCase()}"><input type="checkbox" value="${option.value}" ${option.selected ? 'checked' : ''}> <span>${option.textContent}</span></label>`).join('');
+      search.dispatchEvent(new Event('input'));
     };
-    button.addEventListener('click', () => { panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden) search.focus(); });
+    button.addEventListener('click', event => { if (event.target.closest('.selector-chip-more')) expandedChips = true; panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden) search.focus(); render(); });
     search.addEventListener('input', () => options.querySelectorAll('label').forEach(label => label.hidden = !label.dataset.label.includes(search.value.toLowerCase())));
     options.addEventListener('change', event => { const option = [...select.options].find(item => item.value === event.target.value); option.selected = event.target.checked; select.dispatchEvent(new Event('change', {bubbles:true})); render(); });
+    selectAll.addEventListener('click', () => { filteredOptions().forEach(option => { option.selected = true; }); select.dispatchEvent(new Event('change', {bubbles:true})); render(); });
+    clearAll.addEventListener('click', () => { [...select.options].forEach(option => { option.selected = false; }); expandedChips = false; select.dispatchEvent(new Event('change', {bubbles:true})); render(); });
     document.addEventListener('click', event => { if (!shell.contains(event.target)) { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); } }); render();
   };
   document.querySelectorAll('.task-employees, .task-groups').forEach(mountMultiSelector);
@@ -89,7 +121,7 @@
   });
   const renumber = () => rows().forEach((row, index) => { row.querySelector('.task-number').value = String(index + 1); row.classList.add('is-dirty'); });
   const markDirty = target => target.closest('.task-row')?.classList.add('is-dirty');
-  document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); if (e.target.matches('.task-row input,.task-row textarea,.section-title')) scheduleSave(); if (e.target.matches('.parent-task-search')) { const query=e.target.value.toLowerCase(); [...e.target.closest('.parent-task-field').querySelector('.task-parent').options].forEach((option,index) => { if(index) option.hidden=!option.text.toLowerCase().includes(query); }); } });
+  document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); if (e.target.matches('.task-row input,.task-row textarea,.section-title,.protocol-field')) scheduleSave(); if (e.target.matches('.parent-task-search')) { const query=e.target.value.toLowerCase(); [...e.target.closest('.parent-task-field').querySelector('.task-parent').options].forEach((option,index) => { if(index) option.hidden=!option.text.toLowerCase().includes(query); }); } });
   document.addEventListener('change', e => { if (e.target.matches('.task-row select,.task-row input')) scheduleSave(); if (e.target.matches('.task-employees,.task-groups')) updateAssigneeCount(e.target.closest('.task-row')); if (e.target.matches('.task-mode')) e.target.closest('.task-content').querySelector('.parent-task-field').classList.toggle('d-none', e.target.value !== 'subtasks'); });
   const syncSectionSelects = () => {
     document.querySelectorAll('.section-body').forEach(body => {

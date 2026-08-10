@@ -212,3 +212,69 @@ def test_editor_preserves_draft_creates_section_and_saves_parent():
         assert section.protocol_id == protocol_id
     assert sections
     teardown_protocol()
+
+
+def test_protocol_view_is_document_without_separate_task_edit_links():
+    teardown_protocol()
+    protocol_id, _, _ = make_protocol()
+    client = TestClient(app)
+
+    page = client.get(f"/protocols/{protocol_id}")
+
+    assert page.status_code == 200
+    assert "/protocol-tasks/" not in page.text
+    assert 'class="protocol-document"' in page.text
+    action_bar = page.text.split('data-testid="action-bar"', 1)[1].split("</header>", 1)[0]
+    assert action_bar.count(f'href="/protocols/{protocol_id}/editor"') == 1
+    assert action_bar.count("Редактировать") == 1
+    teardown_protocol()
+
+
+def test_editor_close_saves_before_navigation_and_bulk_selectors_are_search_aware():
+    teardown_protocol()
+    protocol_id, _, _ = make_protocol()
+    client = TestClient(app)
+
+    page = client.get(f"/protocols/{protocol_id}/editor")
+    script = client.get("/static/js/protocol-editor.js").text
+
+    assert f'data-close-url="/protocols/{protocol_id}"' in page.text
+    assert "await save();\n      window.location.assign(button.dataset.closeUrl)" in script
+    assert "catch (_)" in script
+    assert "filteredOptions().forEach" in script
+    assert "option.textContent.toLowerCase().includes(search.value.trim().toLowerCase())" in script
+    assert "[...select.options].forEach(option => { option.selected = false; })" in script
+    assert "Выбрать все списки" in script
+    assert "Снять все" in script
+    assert "new Set([...row.querySelector('.task-employees').selectedOptions]" in script
+    assert "ids.add(id)" in script
+    assert 'class="edit-task"' not in page.text
+    teardown_protocol()
+
+
+def test_editor_save_updates_protocol_details():
+    teardown_protocol()
+    protocol_id, _, _ = make_protocol()
+    client = TestClient(app)
+
+    response = client.post(
+        f"/protocols/{protocol_id}/editor/save",
+        json={
+            "protocol": {
+                "title": "Итоговый протокол",
+                "number": "Ф-42",
+                "meeting_date": "2026-08-10",
+                "participants": "Иванов, Петров",
+                "description": "Итог заседания",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        protocol = db.get(Protocol, protocol_id)
+        assert protocol.title == "Итоговый протокол"
+        assert protocol.number == "Ф-42"
+        assert protocol.meeting_date == date(2026, 8, 10)
+        assert protocol.participants == "Иванов, Петров"
+    teardown_protocol()
