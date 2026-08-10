@@ -21,6 +21,10 @@ def editor_errors(task: ProtocolTask) -> list[str]:
         errors.append("Не заполнено поручение")
     if not task.assignments:
         errors.append("Не выбран исполнитель")
+    elif task.protocol.source_type == "docx_import" and any(
+        not assignment.employee_id for assignment in task.assignments
+    ):
+        errors.append("Пользователь не найден")
     if not task.deadline:
         errors.append("Не указан срок")
     if not task.section_id:

@@ -1412,6 +1412,25 @@ def match_editor_assignee(
     return {"matched": True}
 
 
+@app.post("/protocols/{protocol_id}/editor/tasks/{task_id}/create-assignee")
+def create_editor_assignee(
+    protocol_id: int, task_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+):
+    """Create a manual directory record and explicitly bind an imported name."""
+    task = db.get(ProtocolTask, task_id)
+    if not task or task.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Поручение не найдено")
+    full_name = str(payload.get("full_name") or "").strip()
+    if not full_name:
+        raise HTTPException(status_code=422, detail="Укажите ФИО сотрудника")
+    employee = Employee(full_name=full_name, source_system="manual", is_active=True)
+    db.add(employee)
+    db.flush()
+    match_source_name(db, task, str(payload.get("source_name") or full_name), employee.id)
+    db.commit()
+    return {"matched": True, "employee_id": employee.id, "bitrix_user_id": employee.bitrix_user_id}
+
+
 @app.get("/protocols/{protocol_id}/editor/publication")
 def editor_publication(protocol_id: int, db: Session = Depends(get_db)):
     protocol = db.get(Protocol, protocol_id)

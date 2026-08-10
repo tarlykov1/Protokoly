@@ -14,6 +14,7 @@ from app.db.models.domain import (
     PublicationSettings,
 )
 from app.services.demo_publication import protocol_plan
+from app.services.protocols.editor import editor_errors
 from app.services.tasks.gateway import TaskGateway
 
 
@@ -95,6 +96,11 @@ class PublicationService:
             return PublicationResult(existing, reused=True)
         if protocol.status not in {"approved", "published"}:
             raise PublicationNotAllowedError("Можно публиковать только утверждённый протокол")
+        unresolved = [task.number for task in protocol.tasks if "Пользователь не найден" in editor_errors(task)]
+        if unresolved:
+            raise PublicationNotAllowedError(
+                "Пользователь не найден для поручений: " + ", ".join(unresolved)
+            )
         settings = self.settings_for(protocol)
         rows, errors, _ = protocol_plan(self.db, protocol)
         # Keep compatibility for installations that used project defaults before settings existed.
