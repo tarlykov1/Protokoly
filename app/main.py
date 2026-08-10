@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.domain import ImportSession, Project, Protocol, ProtocolTask
 from app.db.session import get_db
+from app.services.auth import CurrentUser, Permission, current_user, require
 from app.services.export import ProtocolDocxExporter
 from app.services.imports.service import (
     confirm_session,
@@ -34,6 +35,13 @@ from app.services.protocols.editor import (
 )
 from app.services.protocols.editor import (
     create_task as create_editor_task,
+)
+from app.services.protocols.governance import (
+    EVENT_LABELS,
+    dashboard_metrics,
+    record_event,
+    register_document,
+    transition,
 )
 
 app = FastAPI(title="Protocol Management System")
@@ -99,6 +107,7 @@ def home_redirect():
 
 @app.get("/dashboard")
 def dashboard(request: Request, db: Session = Depends(get_db)):
+    corporate = dashboard_metrics(db)
     draft_count = (
         db.scalar(select(func.count()).select_from(Protocol).where(Protocol.status == "draft")) or 0
     )
@@ -134,6 +143,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             if "PublicationRun" in globals()
             else 0,
             "protocols": protocols,
+            "status_counts": corporate["statuses"],
+            "completion_percent": corporate["completion_percent"],
+            "overdue_count": corporate["overdue_count"],
         },
     )
 
@@ -291,6 +303,7 @@ def complete_protocol_wizard(payload: dict = Body(...), db: Session = Depends(ge
         )
         db.add(protocol)
         db.flush()
+        record_event(db, protocol, "protocol_created", "system")
         groups = {}
         for index, item in enumerate(payload.get("groups", [])):
             name = (
@@ -388,6 +401,7 @@ def create_protocol(
     responsible: str = Form(...),
     participants: str = Form(""),
     description: str = Form(""),
+    actor: CurrentUser = Depends(require(Permission.CREATE)),
     db: Session = Depends(get_db),
 ):
     if not db.get(Project, project_id):
@@ -405,6 +419,8 @@ def create_protocol(
         source_type="manual",
     )
     db.add(protocol)
+    db.flush()
+    record_event(db, protocol, "protocol_created", actor.username)
     db.commit()
     db.refresh(protocol)
     return RedirectResponse(f"/protocols/{protocol.id}?created=1", status_code=303)
@@ -722,12 +738,22 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
             "without_deadline": without_deadline,
             "control_progress": ProtocolControlService.progress(list(p.tasks)),
             "created": request.query_params.get("created") == "1",
+            "history": p.history,
+            "event_labels": EVENT_LABELS,
+            "document_versions": p.document_versions,
+            "current_user": current_user(request),
         },
     )
 
 
 @app.get("/protocols/{protocol_id}/export/docx")
-def export_protocol_docx(protocol_id: int, mode: str = "memo", db: Session = Depends(get_db)):
+def export_protocol_docx(
+    protocol_id: int,
+    request: Request,
+    mode: str = "memo",
+    version: int | None = None,
+    db: Session = Depends(get_db),
+):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
@@ -735,6 +761,10 @@ def export_protocol_docx(protocol_id: int, mode: str = "memo", db: Session = Dep
         content = ProtocolDocxExporter(db).export(protocol_id, mode=mode)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # A link containing version reads an existing registry entry; a normal export creates one.
+    if version is None:
+        register_document(db, protocol, current_user(request).username)
+        db.commit()
     number = (protocol.number or str(protocol.id)).replace("/", "_").replace("\\", "_")
     headers = {"Content-Disposition": f'attachment; filename="protocol_{number}.docx"'}
     return StreamingResponse(
@@ -746,21 +776,20 @@ def export_protocol_docx(protocol_id: int, mode: str = "memo", db: Session = Dep
 
 @app.post("/protocols/{protocol_id}/workflow")
 def change_protocol_workflow(
-    protocol_id: int, action: str = Form(...), db: Session = Depends(get_db)
+    protocol_id: int,
+    action: str = Form(...),
+    actor: CurrentUser = Depends(current_user),
+    db: Session = Depends(get_db),
 ):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
-    transitions = {
-        ("draft", "submit_review"): "review",
-        ("review", "approve"): "approved",
-        ("review", "return_draft"): "draft",
-        ("approved", "publish"): "published",
-    }
-    new_status = transitions.get((protocol.status, action))
-    if not new_status:
-        raise HTTPException(status_code=409, detail="Недопустимый переход статуса")
-    protocol.status = new_status
+    try:
+        transition(db, protocol, action, actor)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Недопустимый переход статуса") from exc
     db.commit()
     return RedirectResponse(f"/protocols/{protocol_id}", status_code=303)
 
@@ -926,7 +955,10 @@ def protocol_editor(
 
 @app.post("/protocols/{protocol_id}/editor/save")
 def save_protocol_editor(
-    protocol_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+    protocol_id: int,
+    payload: dict = Body(...),
+    actor: CurrentUser = Depends(require(Permission.EDIT)),
+    db: Session = Depends(get_db),
 ):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
@@ -947,12 +979,21 @@ def save_protocol_editor(
     for task_data in payload.get("tasks", []):
         task = tasks.get(int(task_data["id"]))
         if task:
+            old_title, old_deadline = task.title, task.deadline
+            old_assignees = sorted(a.employee_id for a in task.assignments if a.employee_id)
             try:
                 apply_task_data(db, task, task_data)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             if "position" in task_data:
                 task.position = int(task_data["position"])
+            if task.title != old_title:
+                record_event(db, protocol, "task_text_changed", actor.username, task_id=task.id)
+            if task.deadline != old_deadline:
+                record_event(db, protocol, "task_deadline_changed", actor.username, task_id=task.id)
+            new_assignees = sorted(a.employee_id for a in task.assignments if a.employee_id)
+            if new_assignees != old_assignees:
+                record_event(db, protocol, "task_assignees_changed", actor.username, task_id=task.id)
     db.commit()
     return {"saved": True}
 
@@ -1401,11 +1442,17 @@ def publish_protocol(
 
 
 @app.post("/protocols/{protocol_id}/sync-bitrix")
-def sync_protocol_bitrix(protocol_id: int, db: Session = Depends(get_db)):
+def sync_protocol_bitrix(
+    protocol_id: int,
+    actor: CurrentUser = Depends(require(Permission.PUBLISH)),
+    db: Session = Depends(get_db),
+):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     result = BitrixTaskSyncService(db, get_bitrix_gateway(db)).sync(protocol)
+    record_event(db, protocol, "bitrix_synced", actor.username, updated=result.updated, errors=result.errors)
+    db.commit()
     return RedirectResponse(
         f"/protocols/{protocol_id}/control?sync_updated={result.updated}&sync_errors={result.errors}",
         status_code=303,

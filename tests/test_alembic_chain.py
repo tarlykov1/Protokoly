@@ -28,5 +28,6 @@ def test_alembic_revisions_form_single_ordered_chain():
         "0014_employee_directory",
         "0015_task_participant_groups",
         "0016",
+        "0017_corporate_governance",
     ]
     assert len(scripts.get_heads()) == 1
