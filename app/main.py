@@ -1045,6 +1045,14 @@ def save_protocol_editor(
     expected_version = payload.get("version")
     if expected_version is not None and int(expected_version) != protocol.version:
         raise HTTPException(status_code=409, detail="Протокол был изменён другим пользователем.")
+    protocol_data = payload.get("protocol", {})
+    for field in ("title", "number", "initiator", "responsible", "participants", "description"):
+        if field in protocol_data:
+            cleaned = str(protocol_data[field]).strip()
+            setattr(protocol, field, cleaned or ("" if field == "title" else None))
+    if "meeting_date" in protocol_data:
+        value = protocol_data["meeting_date"]
+        protocol.meeting_date = date.fromisoformat(value) if value else None
     tasks = {task.id: task for task in protocol.tasks}
     sections = {
         section.id: section

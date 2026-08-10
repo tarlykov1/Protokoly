@@ -73,7 +73,7 @@ def test_protocol_card_and_guided_demo_use_shared_readiness(monkeypatch):
     card = c.get(f"/protocols/{protocol.id}").text
     guided = c.get("/demo/guided?step=3").text
     assert "Готовность протокола" in card
-    assert "Быстрые фильтры" in card
-    assert "AI:" in card
+    assert 'class="protocol-document"' in card
+    assert 'class="document-task"' in card
     assert "Готовность демонстрационного протокола" in guided
     assert "readiness-track" in guided
