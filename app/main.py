@@ -1066,6 +1066,28 @@ def copy_attendees(protocol_id: int, group_id: int, db: Session = Depends(get_db
     return {"copied": len(source.members)}
 
 
+@app.post("/protocols/{protocol_id}/participant-groups/{group_id}/duplicate")
+def duplicate_participant_group(
+    protocol_id: int, group_id: int, db: Session = Depends(get_db)
+):
+    """Create an independent local copy of a participant list."""
+    source = db.get(ProtocolParticipantGroup, group_id)
+    protocol = db.get(Protocol, protocol_id)
+    if not source or source.protocol_id != protocol_id or not protocol:
+        raise HTTPException(status_code=404, detail="Список не найден")
+    existing_names = {group.name for group in protocol.participant_groups}
+    base_name = f"{source.name} — копия"
+    name = base_name
+    suffix = 2
+    while name in existing_names:
+        name = f"{base_name} {suffix}"
+        suffix += 1
+    duplicate = create_group(db, protocol, name, group_type="custom")
+    copy_members(db, source, duplicate)
+    db.commit()
+    return {"id": duplicate.id, "name": duplicate.name}
+
+
 @app.post("/protocols/{protocol_id}/participant-groups/from-template/{template_id}")
 def add_group_from_template(protocol_id: int, template_id: int, db: Session = Depends(get_db)):
     protocol, template = (
