@@ -32,6 +32,12 @@
   document.querySelector('#select-all').addEventListener('change', e => { rows().forEach(row => row.querySelector('.task-select').checked = e.target.checked); updateCount(); });
   document.addEventListener('change', e => { if (e.target.matches('.task-select')) updateCount(); });
   const updateCount = () => document.querySelector('#selected-count').textContent = document.querySelectorAll('.task-select:checked').length;
+  const updateAssigneeCount = row => {
+    const ids = new Set([...row.querySelector('.task-employees').selectedOptions].map(option => option.value));
+    [...row.querySelector('.task-groups').selectedOptions].forEach(option => (option.dataset.memberIds || '').split(',').filter(Boolean).forEach(id => ids.add(id)));
+    row.querySelector('.task-assignee-count').textContent = `${ids.size} исполнителей`;
+  };
+  rows().forEach(updateAssigneeCount);
   document.querySelector('#bulk-apply').addEventListener('click', async () => {
     const task_ids = [...document.querySelectorAll('.task-select:checked')].map(input => +input.closest('.task-row').dataset.taskId);
     if (!task_ids.length) return message('Выберите поручения', true);
@@ -66,7 +72,7 @@
   const renumber = () => rows().forEach((row, index) => { row.querySelector('.task-number').value = String(index + 1); row.classList.add('is-dirty'); });
   const markDirty = target => target.closest('.task-row')?.classList.add('is-dirty');
   document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); if (e.target.matches('.task-row input,.task-row textarea,.section-title')) scheduleSave(); if (e.target.matches('.parent-task-search')) { const query=e.target.value.toLowerCase(); [...e.target.closest('.parent-task-field').querySelector('.task-parent').options].forEach((option,index) => { if(index) option.hidden=!option.text.toLowerCase().includes(query); }); } });
-  document.addEventListener('change', e => { if (e.target.matches('.task-row select,.task-row input')) scheduleSave(); if (e.target.matches('.task-mode')) e.target.closest('.task-content').querySelector('.parent-task-field').classList.toggle('d-none', e.target.value !== 'subtasks'); });
+  document.addEventListener('change', e => { if (e.target.matches('.task-row select,.task-row input')) scheduleSave(); if (e.target.matches('.task-employees,.task-groups')) updateAssigneeCount(e.target.closest('.task-row')); if (e.target.matches('.task-mode')) e.target.closest('.task-content').querySelector('.parent-task-field').classList.toggle('d-none', e.target.value !== 'subtasks'); });
   const syncSectionSelects = () => {
     document.querySelectorAll('.section-body').forEach(body => {
       body.querySelectorAll('.task-section').forEach(select => { select.value = body.dataset.sectionId; });

@@ -8,7 +8,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.db.models.domain import Employee, ImportSession, Project, Protocol
+from app.db.models.domain import (
+    Employee,
+    ImportSession,
+    Project,
+    Protocol,
+    ProtocolParticipantGroup,
+)
 from app.parsers.docx import parse_docx
 from app.parsers.protocol import ParserRegistry, UniversalProtocolParser, parse_deadline
 from app.services.imports.service import (
@@ -45,6 +51,18 @@ def make_docx(path: Path) -> Path:
     table.rows[1].cells[0].text = "Согласовать план"
     table.rows[1].cells[1].text = "Петров П.П. / Сидоров С.С."
     table.rows[1].cells[2].text = "до конца недели"
+    doc.save(path)
+    return path
+
+
+def make_docx_with_attendees(path: Path) -> Path:
+    doc = Document()
+    doc.add_heading("Протокол № 7", level=1)
+    doc.add_heading("Присутствовали", level=2)
+    doc.add_paragraph("Иванов Иван Иванович")
+    doc.add_paragraph("Петрова Анна Сергеевна")
+    doc.add_heading("РЕШЕНИЯ", level=2)
+    doc.add_paragraph("1. Подготовить отчёт. Ответственный: Иванов Иван Иванович. Срок 25.07.2026")
     doc.save(path)
     return path
 
@@ -94,6 +112,37 @@ def test_confirm_creates_protocol_and_cancel_does_not(db, tmp_path, monkeypatch)
     s2.status = "cancelled"
     db.commit()
     assert s2.protocol_id is None
+
+
+def test_docx_attendees_are_imported_into_protocol_group(db, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    session = create_preview_session(
+        db, 1, upload(make_docx_with_attendees(tmp_path / "attendees.docx"))
+    )
+    assert [item["full_name"] for item in session.parsed_payload["attendees"]] == [
+        "Иванов Иван Иванович",
+        "Петрова Анна Сергеевна",
+    ]
+
+    protocol = confirm_session(db, session)
+    group = db.scalar(
+        select(ProtocolParticipantGroup).where(
+            ProtocolParticipantGroup.protocol_id == protocol.id,
+            ProtocolParticipantGroup.type == "attendees",
+        )
+    )
+    assert group.name == "Присутствовали"
+    assert [member.name_snapshot for member in group.members] == [
+        "Иванов Иван Иванович",
+        "Петрова Анна Сергеевна",
+    ]
+    assert all(member.source == "docx_import" for member in group.members)
+    assert (
+        db.scalar(
+            select(Employee).where(Employee.full_name == "Петрова Анна Сергеевна")
+        ).source_system
+        == "docx_import"
+    )
 
 
 def test_update_reopen_and_reparse_history(db, tmp_path, monkeypatch):

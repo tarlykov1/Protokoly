@@ -12,6 +12,14 @@
   });
   document.addEventListener('click', async event => {
     const card = event.target.closest('[data-template-id]');
+    if (card && event.target.closest('.edit-template')) {
+      const name = prompt('Новое название шаблона', card.querySelector('.template-name').textContent.trim());
+      if (name) { await request(`/employee-lists/${card.dataset.templateId}`, {method: 'PUT', body: JSON.stringify({name})}); location.reload(); }
+    }
+    if (card && event.target.closest('.copy-template')) {
+      await request(`/employee-lists/${card.dataset.templateId}/copy`, {method: 'POST', body: '{}'});
+      location.reload();
+    }
     if (card && event.target.closest('.delete-template') && confirm('Удалить шаблон?')) {
       await request(`/employee-lists/${card.dataset.templateId}`, {method: 'DELETE'});
       card.remove();
