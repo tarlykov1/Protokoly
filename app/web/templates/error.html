@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block content %}
+<section class="card shadow-sm border-danger"><div class="card-body p-4">
+  <h1 class="h3">{{ title }}</h1><p>{{ detail }}</p>
+  <p class="text-muted">Код обращения: <code>{{ request_id }}</code></p>
+  <button class="btn btn-primary" onclick="location.reload()">Повторить</button>
+  <button class="btn btn-outline-secondary" onclick="history.back()">Вернуться</button>
+</div></section>{% endblock %}

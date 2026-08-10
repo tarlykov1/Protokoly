@@ -1,16 +1,21 @@
+import logging
 from datetime import date
+from uuid import uuid4
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.request_context import request_id_var
+from app.core.security import sanitize_payload
 from app.db.models.domain import ImportSession, Project, Protocol, ProtocolTask
 from app.db.session import get_db
-from app.services.auth import CurrentUser, Permission, current_user, require
+from app.services.auth import CurrentUser, Permission, current_user, require, require_admin
 from app.services.export import ProtocolDocxExporter
 from app.services.imports.service import (
     confirm_session,
@@ -18,6 +23,7 @@ from app.services.imports.service import (
     reparse_session,
     update_session_payload,
 )
+from app.services.operations import readiness, system_snapshot, touch_presence
 from app.services.protocols.control import (
     STATUS_LABELS,
     ControlActor,
@@ -47,6 +53,32 @@ from app.services.protocols.governance import (
 app = FastAPI(title="Protocol Management System")
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 templates = Jinja2Templates(directory="app/web/templates")
+logger = logging.getLogger("protokoly.http")
+
+
+@app.middleware("http")
+async def correlation_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", "").strip()[:128] or str(uuid4())
+    request.state.request_id = request_id
+    token = request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled request error request_id=%s path=%s", request_id, request.url.path)
+        response = JSONResponse({"title": "Не удалось выполнить операцию", "detail": "Внутренняя ошибка сервера", "request_id": request_id}, status_code=500)
+    finally:
+        request_id_var.reset(token)
+    response.headers["X-Request-ID"] = request_id
+    logger.info("request_id=%s method=%s path=%s status=%s", request_id, request.method, request.url.path, response.status_code)
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def controlled_http_error(request: Request, exc: StarletteHTTPException):
+    payload = {"title": "Не удалось выполнить операцию", "detail": str(exc.detail), "request_id": getattr(request.state, "request_id", str(uuid4()))}
+    if "application/json" in request.headers.get("accept", "") or request.url.path.startswith(("/ready", "/system/diagnostics")):
+        return JSONResponse(payload, status_code=exc.status_code)
+    return templates.TemplateResponse(request, "error.html", payload, status_code=exc.status_code)
 
 
 def readiness_percent(protocol):
@@ -96,8 +128,55 @@ def health():
 
 
 @app.get("/ready")
-def ready():
-    return {"status": "ready"}
+def ready(db: Session = Depends(get_db)):
+    try:
+        return readiness(db)
+    except Exception as exc:
+        raise HTTPException(503, f"Приложение не готово: {exc}") from exc
+
+
+@app.get("/system/health")
+def system_health(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(request, "system_health.html", common_context("Состояние системы", "Состояние системы", snapshot=system_snapshot(db)))
+
+
+@app.get("/system/diagnostics")
+def system_diagnostics(_: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)):
+    return sanitize_payload(system_snapshot(db))
+
+
+@app.get("/system/integration-issues")
+def integration_issues(request: Request, unresolved: bool = True, operation: str = "", _: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)):
+    from app.db.models.domain import IntegrationLog
+
+    stmt = select(IntegrationLog).where(IntegrationLog.status == "error")
+    if unresolved:
+        stmt = stmt.where(IntegrationLog.resolved_at.is_(None))
+    if operation:
+        stmt = stmt.where(IntegrationLog.operation.ilike(f"%{operation}%"))
+    issues = db.scalars(stmt.order_by(IntegrationLog.id.desc()).limit(200)).all()
+    return templates.TemplateResponse(request, "integration_issues.html", common_context("Интеграции", "Проблемы интеграций", issues=issues, operation=operation, unresolved=unresolved))
+
+
+@app.post("/system/integration-issues/{issue_id}/resolve")
+def resolve_integration_issue(issue_id: int, _: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)):
+    from datetime import UTC, datetime
+
+    from app.db.models.domain import IntegrationLog
+
+    issue = db.get(IntegrationLog, issue_id)
+    if not issue:
+        raise HTTPException(404, "Проблема не найдена")
+    issue.resolved_at = datetime.now(UTC)
+    db.commit()
+    return RedirectResponse("/system/integration-issues", status_code=303)
+
+
+@app.post("/protocols/{protocol_id}/presence")
+def protocol_presence(protocol_id: int, request: Request, actor: CurrentUser = Depends(current_user), db: Session = Depends(get_db)):
+    if not db.get(Protocol, protocol_id):
+        raise HTTPException(404, "Протокол не найден")
+    return {"editors": touch_presence(db, protocol_id, actor.username, request.state.request_id), "ttl_seconds": 90}
 
 
 @app.get("/")
@@ -963,6 +1042,9 @@ def save_protocol_editor(
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
+    expected_version = payload.get("version")
+    if expected_version is not None and int(expected_version) != protocol.version:
+        raise HTTPException(status_code=409, detail="Протокол был изменён другим пользователем.")
     tasks = {task.id: task for task in protocol.tasks}
     sections = {
         section.id: section
@@ -994,6 +1076,11 @@ def save_protocol_editor(
             new_assignees = sorted(a.employee_id for a in task.assignments if a.employee_id)
             if new_assignees != old_assignees:
                 record_event(db, protocol, "task_assignees_changed", actor.username, task_id=task.id)
+    protocol.version += 1
+    for task_data in payload.get("tasks", []):
+        task = tasks.get(int(task_data["id"]))
+        if task:
+            task.version += 1
     db.commit()
     return {"saved": True}
 
@@ -1162,14 +1249,27 @@ def save_participant_template(
 
 @app.post("/protocols/{protocol_id}/editor/tasks")
 def add_editor_task(
-    protocol_id: int, payload: dict = Body(default={}), db: Session = Depends(get_db)
+    protocol_id: int, request: Request, payload: dict = Body(default={}), db: Session = Depends(get_db)
 ):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
+    key = request.headers.get("Idempotency-Key", "").strip()[:128]
+    if key:
+        existing = db.scalar(select(ProtocolTask).where(ProtocolTask.idempotency_key == key))
+        if existing:
+            return {"id": existing.id, "duplicate": True}
     task = create_editor_task(db, protocol, payload)
-    db.commit()
-    return {"id": task.id}
+    task.idempotency_key = key or None
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(select(ProtocolTask).where(ProtocolTask.idempotency_key == key))
+        if not existing:
+            raise
+        return {"id": existing.id, "duplicate": True}
+    return {"id": task.id, "duplicate": False}
 
 
 @app.post("/protocols/{protocol_id}/editor/tasks/{task_id}/duplicate")

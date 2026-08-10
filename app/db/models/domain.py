@@ -48,6 +48,9 @@ class IntegrationLog(Base):
     request: Mapped[dict | None] = mapped_column(JSON())
     response: Mapped[dict | None] = mapped_column(JSON())
     status: Mapped[str] = mapped_column(String(32))
+    request_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    attempts: Mapped[int] = mapped_column(Integer(), default=1)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -153,6 +156,7 @@ class EmployeeListMember(Base):
 class Protocol(TimestampMixin, Base):
     __tablename__ = "protocols"
     id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(Integer(), default=1, nullable=False)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     protocol_type: Mapped[str] = mapped_column(String(64), default="protocol")
     title: Mapped[str] = mapped_column(String(500))
@@ -306,6 +310,8 @@ class ProtocolSection(Base):
 class ProtocolTask(TimestampMixin, Base):
     __tablename__ = "protocol_tasks"
     id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(Integer(), default=1, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
     protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"))
     section_id: Mapped[int | None] = mapped_column(ForeignKey("protocol_sections.id"))
     parent_task_id: Mapped[int | None] = mapped_column(
@@ -497,6 +503,8 @@ class PublicationRun(Base):
     failed_items: Mapped[int] = mapped_column(Integer(), default=0)
     created_by: Mapped[str | None] = mapped_column(String(255))
     error_summary: Mapped[str | None] = mapped_column(Text())
+    operation_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    request_id: Mapped[str | None] = mapped_column(String(128), index=True)
     protocol: Mapped[Protocol] = relationship()
     items: Mapped[list["PublicationItem"]] = relationship(back_populates="publication_run")
 
@@ -523,6 +531,18 @@ class PublicationItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     publication_run: Mapped[PublicationRun] = relationship(back_populates="items")
     protocol_task: Mapped[ProtocolTask | None] = relationship()
+
+
+class EditPresence(Base):
+    """Short-lived advisory editor presence; never locks a protocol."""
+
+    __tablename__ = "edit_presence"
+    __table_args__ = (UniqueConstraint("protocol_id", "username"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    username: Mapped[str] = mapped_column(String(255))
+    request_id: Mapped[str | None] = mapped_column(String(128))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class ImportSession(Base):
