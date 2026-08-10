@@ -4,11 +4,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.db.models.domain import Employee, Project, Protocol, ProtocolTask
+from app.db.models.domain import (
+    Employee,
+    ParticipantGroupTemplate,
+    ParticipantGroupTemplateMember,
+    Project,
+    Protocol,
+    ProtocolTask,
+)
 from app.services.demo_publication import protocol_plan
 from app.services.protocols.editor import apply_task_data
 from app.services.protocols.participants import (
     copy_members,
+    copy_template,
     create_group,
     replace_members,
     selected_groups,
@@ -103,3 +111,22 @@ def test_group_membership_is_refreshed_at_publication_time():
     protocol_plan(db, protocol)
 
     assert [item.employee_id for item in task.assignments] == [employees[1].id]
+
+
+def test_imported_template_is_an_independent_protocol_copy():
+    db, _, protocol, employees = setup_data()
+    template = ParticipantGroupTemplate(name="Руководители проекта")
+    template.members.append(
+        ParticipantGroupTemplateMember(
+            employee_id=employees[0].id, name_snapshot=employees[0].full_name
+        )
+    )
+    db.add(template)
+    db.flush()
+
+    local_group = copy_template(db, protocol, template)
+    replace_members(db, local_group, [employees[1].id])
+
+    assert [member.employee_id for member in template.members] == [employees[0].id]
+    assert [member.employee_id for member in local_group.members] == [employees[1].id]
+    assert local_group.type == "template_copy"

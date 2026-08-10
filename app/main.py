@@ -511,6 +511,7 @@ from app.db.models.domain import (
     IntegrationLog,
     IntegrationSettings,
     ParticipantGroupTemplate,
+    ParticipantGroupTemplateMember,
     ProtocolParticipantGroup,
     ProtocolParticipantGroupMember,
     ProtocolSection,
@@ -964,12 +965,63 @@ def add_participant_group(
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     try:
-        group = create_group(db, protocol, payload.get("name", ""))
+        source = payload.get("source", "empty")
+        group = create_group(
+            db,
+            protocol,
+            payload.get("name", ""),
+            group_type="template_copy" if source == "template" else "custom",
+        )
         replace_members(db, group, payload.get("employee_ids", []))
+        if source == "attendees":
+            attendees = db.scalar(
+                select(ProtocolParticipantGroup).where(
+                    ProtocolParticipantGroup.protocol_id == protocol_id,
+                    ProtocolParticipantGroup.type == "attendees",
+                )
+            )
+            if attendees:
+                copy_members(db, attendees, group)
+        elif source == "template":
+            template = db.get(ParticipantGroupTemplate, int(payload.get("template_id") or 0))
+            if not template:
+                raise ValueError("Шаблон не найден")
+            replace_members(
+                db, group, [member.employee_id for member in template.members], source="template"
+            )
         db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"id": group.id, "name": group.name}
+
+
+@app.post("/protocols/{protocol_id}/participant-groups/{group_id}/manual-member")
+def add_manual_group_member(
+    protocol_id: int, group_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+):
+    """Create a directory employee and add them to a local protocol list in one action."""
+    group = db.get(ProtocolParticipantGroup, group_id)
+    if not group or group.protocol_id != protocol_id:
+        raise HTTPException(status_code=404, detail="Список не найден")
+    full_name = str(payload.get("full_name") or "").strip()
+    if not full_name:
+        raise HTTPException(status_code=422, detail="ФИО обязательно")
+    employee = Employee(
+        full_name=full_name,
+        position=str(payload.get("position") or "").strip() or None,
+        department=str(payload.get("department") or "").strip() or None,
+        source_system="manual",
+        is_active=True,
+    )
+    db.add(employee)
+    db.flush()
+    group.members.append(
+        ProtocolParticipantGroupMember(
+            employee_id=employee.id, name_snapshot=employee.full_name, source="manual"
+        )
+    )
+    db.commit()
+    return {"id": employee.id, "full_name": employee.full_name}
 
 
 @app.put("/protocols/{protocol_id}/participant-groups/{group_id}")
@@ -1710,14 +1762,52 @@ def delete_employee(employee_id: int, db: Session = Depends(get_db)):
 def employee_lists(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
-        "simple_list.html",
-        {
-            "title": "Списки сотрудников",
-            "items": [
-                employee_list.name
-                for employee_list in db.scalars(
-                    select(EmployeeList).order_by(EmployeeList.name)
-                ).all()
-            ],
-        },
+        "participant_templates.html",
+        common_context(
+            "Шаблоны списков участников",
+            "Шаблоны списков участников",
+            templates=db.scalars(
+                select(ParticipantGroupTemplate).order_by(ParticipantGroupTemplate.name)
+            ).all(),
+            employees=db.scalars(
+                select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.full_name)
+            ).all(),
+        ),
     )
+
+
+@app.post("/employee-lists")
+def create_participant_template(payload: dict = Body(...), db: Session = Depends(get_db)):
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Название шаблона обязательно")
+    template = ParticipantGroupTemplate(name=name)
+    db.add(template)
+    db.flush()
+    seen = set()
+    for value in payload.get("employee_ids", []):
+        employee_id = int(value)
+        employee = db.get(Employee, employee_id)
+        if employee and employee_id not in seen:
+            template.members.append(
+                ParticipantGroupTemplateMember(
+                    employee_id=employee.id, name_snapshot=employee.full_name
+                )
+            )
+            seen.add(employee_id)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Шаблон с таким названием уже существует") from exc
+    return {"id": template.id, "name": template.name}
+
+
+@app.delete("/employee-lists/{template_id}")
+def delete_participant_template(template_id: int, db: Session = Depends(get_db)):
+    template = db.get(ParticipantGroupTemplate, template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    db.delete(template)
+    db.commit()
+    return {"deleted": True}
