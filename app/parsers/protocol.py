@@ -82,6 +82,15 @@ class ParsedTask:
 
 
 @dataclass(frozen=True)
+class ParsedAttendee:
+    """A person found in the document's attendance block."""
+
+    full_name: str
+    position: str | None = None
+    source_order: int = 0
+
+
+@dataclass(frozen=True)
 class ParserResult:
     document_title: str
     document_number: str | None = None
@@ -90,6 +99,7 @@ class ParserResult:
     protocol_type: str = "protocol"
     sections: list[ParsedSection] = field(default_factory=list)
     tasks: list[ParsedTask] = field(default_factory=list)
+    attendees: list[ParsedAttendee] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -196,7 +206,7 @@ def normalize_docx_text(text: str) -> str:
 
 
 def _heading_key(text: str) -> str:
-    text = normalize_docx_text(text).strip(" \"«»“”‘’:")
+    text = normalize_docx_text(text).strip(' "«»“”‘’:')
     return re.sub(r"\s+", "", text).upper()
 
 
@@ -234,6 +244,72 @@ def split_assignee_names(value: str) -> list[str]:
     return names
 
 
+ATTENDEE_HEADING_RE = re.compile(r"^(?:присутствовали|участники)(?:\s+совещания)?\s*:?(.*)$", re.I)
+ATTENDEE_STOP_RE = re.compile(
+    r"^(?:повестка|слушали|решили|постановили|поручения|отсутствовали)\b", re.I
+)
+
+
+def extract_attendees(document: ParsedDocument) -> list[ParsedAttendee]:
+    """Extract names following a conventional attendance heading.
+
+    Both paragraph lists and two-column ``name / position`` tables are supported.  The
+    extractor intentionally stops at the first protocol body heading so task assignees are
+    never accidentally imported as meeting attendees.
+    """
+    elements = document.elements or [
+        ParsedElement(p.index, p.text, "paragraph", SourceLocation(paragraph_index=p.index))
+        for p in document.paragraphs
+    ]
+    active = False
+    found: list[ParsedAttendee] = []
+    seen: set[str] = set()
+
+    def add(value: str, order: int, position: str | None = None) -> None:
+        value = normalize_docx_text(value).strip(" -–—•;,")
+        value = re.sub(r"^\d+[.)]\s*", "", value)
+        if not value or len(value) > 255 or TASK_RE.match(value):
+            return
+        key = value.casefold()
+        if key not in seen:
+            found.append(
+                ParsedAttendee(value, normalize_docx_text(position) if position else None, order)
+            )
+            seen.add(key)
+
+    for element in elements:
+        text = normalize_docx_text(element.text)
+        heading = ATTENDEE_HEADING_RE.match(text)
+        if heading:
+            active = True
+            if element.kind == "table_row" and len(element.cells) > 1:
+                for cell in element.cells[1:]:
+                    for name in split_assignee_names(cell):
+                        add(name, element.order)
+            else:
+                inline = heading.group(1).strip()
+                for name in split_assignee_names(inline):
+                    add(name, element.order)
+            continue
+        if not active:
+            continue
+        if (
+            ATTENDEE_STOP_RE.match(text)
+            or TASK_RE.match(text)
+            or (element.style and "Heading" in element.style and found)
+        ):
+            break
+        if element.kind == "table_row" and element.cells:
+            cells = [normalize_docx_text(cell) for cell in element.cells]
+            if cells[0].casefold() in {"фио", "ф.и.о.", "участник", "участники"}:
+                continue
+            add(cells[0], element.order, cells[1] if len(cells) > 1 else None)
+        else:
+            for name in split_assignee_names(text):
+                add(name, element.order)
+    return found
+
+
 class UniversalProtocolParser:
     parser_type = "universal"
 
@@ -256,11 +332,15 @@ class UniversalProtocolParser:
         title = next((e.text for e in elements if e.text.strip()), "Untitled protocol")
         sections: list[ParsedSection] = []
         tasks: list[ParsedTask] = []
+        attendees = extract_attendees(document)
+        attendee_orders = {item.source_order for item in attendees}
         current_section = "Без раздела"
         warnings: list[str] = []
         for e in elements:
             text = e.text.strip()
             if not text:
+                continue
+            if ATTENDEE_HEADING_RE.match(text) or e.order in attendee_orders:
                 continue
             if self._is_section(e):
                 current_section = text
@@ -318,6 +398,7 @@ class UniversalProtocolParser:
             title,
             sections=sections,
             tasks=tasks,
+            attendees=attendees,
             warnings=warnings,
             metadata={"element_count": len(elements)},
         )
@@ -383,9 +464,7 @@ class MemoProtocolParser(UniversalProtocolParser):
                 text = normalize_docx_text(e.text)
                 if text:
                     norm_elements.append(
-                        ParsedElement(
-                            len(norm_elements), text, e.kind, e.location, e.style
-                        )
+                        ParsedElement(len(norm_elements), text, e.kind, e.location, e.style)
                     )
         title = next((e.text for e in norm_elements if e.text), "Untitled memo")
         first_elements = [e.text for e in norm_elements[:30]]

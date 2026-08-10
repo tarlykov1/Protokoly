@@ -16,14 +16,17 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.domain import (
+    Employee,
     ImportSession,
     Protocol,
+    ProtocolParticipantGroup,
+    ProtocolParticipantGroupMember,
     ProtocolSection,
     ProtocolTask,
     ProtocolTaskAssignment,
 )
 from app.parsers.docx import parse_docx
-from app.parsers.protocol import ParserRegistry
+from app.parsers.protocol import ParserRegistry, extract_attendees
 
 MAX_IMPORT_SIZE = 10 * 1024 * 1024
 logger = logging.getLogger(__name__)
@@ -202,6 +205,8 @@ def parse_file(db: Session, session: ImportSession, parser_type: str | None = No
         )
         parser = fallback
         choice = fallback.confidence(doc)
+    # Attendance extraction is parser-independent (specialized parsers focus on tasks).
+    result["attendees"] = [item.__dict__ for item in extract_attendees(doc)]
     result["parser_choice"] = {
         "parser_type": choice.parser_type,
         "confidence": choice.confidence,
@@ -365,6 +370,50 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
     )
     db.add(protocol)
     db.flush()
+    attendees_group = db.scalar(
+        select(ProtocolParticipantGroup).where(
+            ProtocolParticipantGroup.protocol_id == protocol.id,
+            ProtocolParticipantGroup.type == "attendees",
+        )
+    )
+    if attendees_group is None:
+        attendees_group = ProtocolParticipantGroup(
+            protocol_id=protocol.id, name="Присутствовали", type="attendees"
+        )
+        db.add(attendees_group)
+        db.flush()
+    for attendee in payload.get("attendees", []):
+        data = attendee if isinstance(attendee, dict) else {"full_name": attendee}
+        full_name = str(data.get("full_name") or data.get("name") or "").strip()
+        if not full_name:
+            continue
+        employee = db.scalar(select(Employee).where(Employee.full_name == full_name))
+        if employee is None:
+            employee = next(
+                (
+                    item
+                    for item in db.scalars(select(Employee)).all()
+                    if item.full_name.casefold() == full_name.casefold()
+                ),
+                None,
+            )
+        if employee is None:
+            employee = Employee(
+                full_name=full_name,
+                position=(str(data.get("position") or "").strip() or None),
+                source_system="docx_import",
+                is_active=True,
+            )
+            db.add(employee)
+            db.flush()
+        if all(member.employee_id != employee.id for member in attendees_group.members):
+            attendees_group.members.append(
+                ProtocolParticipantGroupMember(
+                    employee_id=employee.id,
+                    name_snapshot=employee.full_name,
+                    source="docx_import",
+                )
+            )
     section_by_title = {}
     for i, s in enumerate(payload.get("sections", []), 1):
         sec = ProtocolSection(

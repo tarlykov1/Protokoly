@@ -1126,9 +1126,27 @@ def duplicate_editor_task(protocol_id: int, task_id: int, db: Session = Depends(
             "priority": source.priority,
             "create_as_subtasks": source.create_as_subtasks,
             "is_controlled": source.is_controlled,
-            "employee_ids": [a.employee_id for a in source.assignments if a.employee_id],
+            "parent_task_id": source.parent_task_id,
+            "employee_ids": [
+                a.employee_id
+                for a in source.assignments
+                if a.employee_id and not a.source_participant_group_id
+            ],
+            "participant_group_ids": [
+                selection.participant_group_id for selection in source.participant_group_selections
+            ],
         },
     )
+    if source.control:
+        from app.db.models.domain import ProtocolTaskControl
+
+        duplicate.control = ProtocolTaskControl(
+            status=source.control.status,
+            planned_date=source.control.planned_date,
+            actual_date=source.control.actual_date,
+            result_comment=source.control.result_comment,
+            last_synced_at=source.control.last_synced_at,
+        )
     db.commit()
     return {"id": duplicate.id}
 
@@ -1343,7 +1361,9 @@ def save_publication_settings(
 
 
 @app.post("/protocols/{protocol_id}/publish")
-def publish_protocol(protocol_id: int, update_existing: bool = Form(False), db: Session = Depends(get_db)):
+def publish_protocol(
+    protocol_id: int, update_existing: bool = Form(False), db: Session = Depends(get_db)
+):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
@@ -1799,7 +1819,9 @@ def create_participant_template(payload: dict = Body(...), db: Session = Depends
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Шаблон с таким названием уже существует") from exc
+        raise HTTPException(
+            status_code=409, detail="Шаблон с таким названием уже существует"
+        ) from exc
     return {"id": template.id, "name": template.name}
 
 
@@ -1811,3 +1833,63 @@ def delete_participant_template(template_id: int, db: Session = Depends(get_db))
     db.delete(template)
     db.commit()
     return {"deleted": True}
+
+
+@app.put("/employee-lists/{template_id}")
+def update_participant_template(
+    template_id: int, payload: dict = Body(...), db: Session = Depends(get_db)
+):
+    """Edit the reusable source; protocol-local copies remain unchanged."""
+    template = db.get(ParticipantGroupTemplate, template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    name = str(payload.get("name", template.name)).strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Название шаблона обязательно")
+    template.name = name
+    if "employee_ids" in payload:
+        template.members.clear()
+        db.flush()
+        seen: set[int] = set()
+        for value in payload.get("employee_ids") or []:
+            employee = db.get(Employee, int(value))
+            if employee and employee.id not in seen:
+                template.members.append(
+                    ParticipantGroupTemplateMember(
+                        employee_id=employee.id, name_snapshot=employee.full_name
+                    )
+                )
+                seen.add(employee.id)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Шаблон с таким названием уже существует"
+        ) from exc
+    return {"id": template.id, "name": template.name}
+
+
+@app.post("/employee-lists/{template_id}/copy")
+def copy_participant_template(
+    template_id: int, payload: dict = Body(default={}), db: Session = Depends(get_db)
+):
+    source = db.get(ParticipantGroupTemplate, template_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    base_name = str(payload.get("name") or f"{source.name} — копия").strip()
+    name, suffix = base_name, 2
+    while db.scalar(
+        select(ParticipantGroupTemplate.id).where(ParticipantGroupTemplate.name == name)
+    ):
+        name, suffix = f"{base_name} ({suffix})", suffix + 1
+    duplicate = ParticipantGroupTemplate(name=name)
+    duplicate.members = [
+        ParticipantGroupTemplateMember(
+            employee_id=member.employee_id, name_snapshot=member.name_snapshot
+        )
+        for member in source.members
+    ]
+    db.add(duplicate)
+    db.commit()
+    return {"id": duplicate.id, "name": duplicate.name}
