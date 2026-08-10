@@ -176,6 +176,39 @@ class Protocol(TimestampMixin, Base):
     publication_settings: Mapped["PublicationSettings | None"] = relationship(
         back_populates="protocol", cascade="all, delete-orphan", uselist=False
     )
+    history: Mapped[list["ProtocolHistory"]] = relationship(
+        back_populates="protocol", cascade="all, delete-orphan", order_by="ProtocolHistory.created_at.desc()"
+    )
+    document_versions: Mapped[list["ProtocolDocumentVersion"]] = relationship(
+        back_populates="protocol", cascade="all, delete-orphan", order_by="ProtocolDocumentVersion.version.desc()"
+    )
+
+
+class ProtocolHistory(Base):
+    """Immutable, user-facing audit event for a protocol aggregate."""
+
+    __tablename__ = "protocol_history"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    user: Mapped[str] = mapped_column(String(255))
+    details: Mapped[dict] = mapped_column(JSON(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    protocol: Mapped[Protocol] = relationship(back_populates="history")
+
+
+class ProtocolDocumentVersion(Base):
+    """Registry entry for an exported DOCX; files may live in external storage."""
+
+    __tablename__ = "protocol_document_versions"
+    __table_args__ = (UniqueConstraint("protocol_id", "version"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer())
+    user: Mapped[str] = mapped_column(String(255))
+    file_url: Mapped[str] = mapped_column(String(1000))
+    exported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    protocol: Mapped[Protocol] = relationship(back_populates="document_versions")
 
 
 class PublicationSettings(TimestampMixin, Base):
