@@ -118,6 +118,7 @@
     if (e.target.closest('.delete-task') && confirm('Удалить поручение?')) { await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}`, {method:'DELETE'}); row.remove(); }
     if (e.target.closest('.duplicate-task')) { await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/duplicate`, {method:'POST'}); location.reload(); }
     if (e.target.closest('.memo-assignee')) { const employee_id = row.querySelector('.task-employees').value; if (!employee_id) return message('Сначала выберите сотрудника из справочника', true); await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/match-assignee`, {method:'POST', body:JSON.stringify({source_name:e.target.dataset.sourceName, employee_id})}); location.reload(); }
+    if (e.target.closest('.create-memo-assignee')) { const source_name=e.target.dataset.sourceName; const full_name=prompt('ФИО нового сотрудника',source_name); if(!full_name)return; await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/create-assignee`,{method:'POST',body:JSON.stringify({source_name,full_name})}); location.reload(); }
   });
   const renumber = () => rows().forEach((row, index) => { row.querySelector('.task-number').value = String(index + 1); row.classList.add('is-dirty'); });
   const markDirty = target => target.closest('.task-row')?.classList.add('is-dirty');

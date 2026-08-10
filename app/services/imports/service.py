@@ -104,20 +104,29 @@ def resolve_payload(db: Session, payload: dict) -> dict:
     employees = db.scalars(select(Employee)).all()
     aliases = db.scalars(select(EmployeeAlias)).all()
     lists = {norm(x.name): x for x in db.scalars(select(EmployeeList)).all()}
-    alias_map = {norm(a.alias): a.employee_id for a in aliases}
+    # Keep every match.  A dict comprehension used to silently retain one of
+    # several aliases and therefore made the selected employee depend on query
+    # order.
+    alias_map: dict[str, set[int]] = {}
+    for alias in aliases:
+        alias_map.setdefault(norm(alias.alias), set()).add(alias.employee_id)
     dirs = db.scalars(
         select(Direction).where(Direction.project_id == payload.get("project_id", -1))
     ).all()
     blocks = db.scalars(
         select(Block).where(Block.project_id == payload.get("project_id", -1))
     ).all()
+    resolution_errors: list[str] = []
     for task in payload.get("tasks", []):
         raw = task.get("assignee_raw") or ""
         parts = [p.strip() for p in re.split(r",|/| совместно с ", raw) if p.strip()]
         task["assignee_resolution"] = []
         for part in parts:
             n = norm(part.replace("Ответственный:", ""))
-            matches = [e for e in employees if norm(e.full_name) == n or alias_map.get(n) == e.id]
+            matching_ids = {
+                e.id for e in employees if norm(e.full_name) == n
+            } | alias_map.get(n, set())
+            matches = [e for e in employees if e.id in matching_ids and e.is_active]
             if n in lists:
                 task["assignee_resolution"].append(
                     {"raw": part, "status": "found", "employee_list_id": lists[n].id}
@@ -139,8 +148,12 @@ def resolve_payload(db: Session, payload: dict) -> dict:
                         "candidate_ids": [e.id for e in matches],
                     }
                 )
+                resolution_errors.append(
+                    f'Исполнитель «{part}»: найдено несколько сотрудников с таким ФИО.'
+                )
             else:
                 task["assignee_resolution"].append({"raw": part, "status": "not_found"})
+                resolution_errors.append(f'Исполнитель «{part}»: Пользователь не найден.')
         if not parts:
             task["assignee_resolution"] = [{"raw": raw, "status": "not_found"}]
         d_raw = norm(task.get("direction_raw") or "")
@@ -159,6 +172,7 @@ def resolve_payload(db: Session, payload: dict) -> dict:
                 None,
             )
             task["block_id"] = b.id if b else None
+    payload["errors"] = list(payload.get("errors") or []) + resolution_errors
     return payload
 
 
@@ -340,7 +354,16 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
             "Импорт нельзя подтвердить: не распознано ни одного поручения. "
             "Повторите распознавание или загрузите другой DOCX.",
         )
-    if session.errors_payload or payload.get("errors"):
+    # Unresolved directory names are deliberately carried into the editor as
+    # assignments without employee_id.  Other parser errors still prevent a
+    # potentially corrupt document from being confirmed.
+    resolution_error_markers = ("Пользователь не найден", "несколько сотрудников с таким ФИО")
+    blocking_errors = [
+        error
+        for error in (session.errors_payload or payload.get("errors") or [])
+        if not any(marker in str(error) for marker in resolution_error_markers)
+    ]
+    if blocking_errors:
         raise HTTPException(
             400,
             "Импорт нельзя подтвердить: исправьте ошибки распознавания исполнителей.",
