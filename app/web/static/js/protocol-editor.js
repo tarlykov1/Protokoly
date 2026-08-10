@@ -40,14 +40,21 @@
   });
   document.querySelector('#add-task').addEventListener('click', async () => { clearTimeout(saveTimer); await save(); await request(`/protocols/${id}/editor/tasks`, {method:'POST', body:'{}'}); location.reload(); });
   document.querySelector('#add-section').addEventListener('click', async () => { const title = prompt('Название раздела'); if (title) { await request(`/protocols/${id}/editor/sections`, {method:'POST', body:JSON.stringify({title})}); location.reload(); } });
-  document.querySelector('#add-participant-group')?.addEventListener('click', async () => { const name=prompt('Название списка'); if(name){await request(`/protocols/${id}/participant-groups`,{method:'POST',body:JSON.stringify({name})});location.reload();} });
+  document.querySelector('#add-participant-group')?.addEventListener('click', () => bootstrap.Modal.getOrCreateInstance('#create-group-modal').show());
+  document.querySelector('#create-group-form')?.addEventListener('submit', async e => {
+    e.preventDefault(); const form=e.currentTarget;
+    await request(`/protocols/${id}/participant-groups`, {method:'POST', body:JSON.stringify({name:form.name.value,source:form.source.value,template_id:form.template_id?.value||null})}); location.reload();
+  });
   document.querySelector('#participant-template')?.addEventListener('change', async e => { if(e.target.value){await request(`/protocols/${id}/participant-groups/from-template/${e.target.value}`,{method:'POST'});location.reload();} });
   document.querySelectorAll('.participant-card').forEach(card => card.addEventListener('click', async e => { const gid=card.dataset.groupId;
     if(e.target.closest('.delete-participant-group')&&confirm('Удалить список?')){await request(`/protocols/${id}/participant-groups/${gid}`,{method:'DELETE'});location.reload();}
     if(e.target.closest('.save-participant-template')){const name=prompt('Название сохранённого списка');if(name){await request(`/protocols/${id}/participant-groups/${gid}/save-template`,{method:'POST',body:JSON.stringify({name})});location.reload();}}
     if(e.target.closest('.copy-attendees')){await request(`/protocols/${id}/participant-groups/${gid}/copy-attendees`,{method:'POST'});location.reload();}
-    if(e.target.closest('.edit-participant-group')){const raw=prompt('ID сотрудников через запятую');if(raw!==null){await request(`/protocols/${id}/participant-groups/${gid}`,{method:'PUT',body:JSON.stringify({employee_ids:raw.split(',').map(v=>v.trim()).filter(Boolean)})});location.reload();}}
+    if(e.target.closest('.edit-participant-group')){const form=document.querySelector('#edit-group-form');form.dataset.groupId=gid;const selected=new Set([...card.querySelectorAll('[data-employee-id]')].map(item=>item.dataset.employeeId));form.querySelectorAll('.group-employee').forEach(input=>input.checked=selected.has(input.value));document.querySelector('#group-member-count').textContent=`${selected.size} участников`;bootstrap.Modal.getOrCreateInstance('#edit-group-modal').show();}
   }));
+  document.querySelector('#edit-group-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget;await request(`/protocols/${id}/participant-groups/${form.dataset.groupId}`,{method:'PUT',body:JSON.stringify({employee_ids:[...form.querySelectorAll('.group-employee:checked')].map(input=>+input.value)})});location.reload();});
+  document.querySelector('#group-employee-search')?.addEventListener('input',e=>{const query=e.target.value.toLowerCase();document.querySelectorAll('.employee-option').forEach(row=>row.classList.toggle('d-none',!row.textContent.toLowerCase().includes(query)));});
+  document.querySelector('#add-manual-member')?.addEventListener('click',async()=>{const form=document.querySelector('#edit-group-form');const full_name=document.querySelector('#manual-full-name').value;if(!full_name)return message('Укажите ФИО',true);await request(`/protocols/${id}/participant-groups/${form.dataset.groupId}/manual-member`,{method:'POST',body:JSON.stringify({full_name,position:document.querySelector('#manual-position').value,department:document.querySelector('#manual-department').value})});location.reload();});
   document.addEventListener('click', async e => {
     const section = e.target.closest('.protocol-section[data-section-id]');
     if (section && e.target.closest('.delete-section') && confirm('Удалить раздел? Поручения останутся без раздела.')) { await request(`/protocols/${id}/editor/sections/${section.dataset.sectionId}`, {method:'DELETE'}); location.reload(); return; }
