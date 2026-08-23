@@ -186,6 +186,9 @@ class Protocol(TimestampMixin, Base):
     document_versions: Mapped[list["ProtocolDocumentVersion"]] = relationship(
         back_populates="protocol", cascade="all, delete-orphan", order_by="ProtocolDocumentVersion.version.desc()"
     )
+    publication_runs: Mapped[list["PublicationRun"]] = relationship(
+        back_populates="protocol", cascade="all, delete-orphan", order_by="PublicationRun.id"
+    )
 
 
 class ProtocolHistory(Base):
@@ -410,6 +413,11 @@ class ProtocolTaskAssignment(Base):
         """Name shown for both resolved employees and assignees preserved from an import."""
         return self.employee.full_name if self.employee else self.individual_title
 
+    @property
+    def name_snapshot(self) -> str | None:
+        """Stable imported display name; unresolved imports intentionally have no employee."""
+        return self.individual_title
+
 
 class ProtocolTaskParticipantGroup(Base):
     """A durable group selection; members are resolved only when a plan is built."""
@@ -505,7 +513,7 @@ class PublicationRun(Base):
     error_summary: Mapped[str | None] = mapped_column(Text())
     operation_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     request_id: Mapped[str | None] = mapped_column(String(128), index=True)
-    protocol: Mapped[Protocol] = relationship()
+    protocol: Mapped[Protocol] = relationship(back_populates="publication_runs")
     items: Mapped[list["PublicationItem"]] = relationship(back_populates="publication_run")
 
 
