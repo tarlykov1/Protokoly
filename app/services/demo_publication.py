@@ -16,17 +16,13 @@ from app.db.models.domain import (
 from app.services.ai.provider import TaskAssessmentResult
 from app.services.protocols.participants import refresh_protocol_group_assignments
 from app.services.task_planning.planner import TaskPlanningService
+from app.services.validation import ProtocolValidationService
 
 
 def validate_task(task: ProtocolTask):
-    errors = []
-    warnings = []
-    if not task.title or not task.title.strip():
-        errors.append("Нет формулировки")
-    if not task.assignments:
-        errors.append("Нет исполнителя")
-    if not task.deadline:
-        warnings.append("Не указан срок")
+    issues = ProtocolValidationService().validate_task(task)
+    errors = [issue.message for issue in issues if issue.critical]
+    warnings = [issue.message for issue in issues if not issue.critical]
     task.validation_status = "ready" if not errors else "validation_required"
     return errors, warnings
 

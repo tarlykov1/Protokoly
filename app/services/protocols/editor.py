@@ -11,25 +11,11 @@ from app.db.models.domain import (
     ProtocolTaskAssignment,
 )
 from app.services.protocols.participants import expand_group_assignment, set_group_assignments
+from app.services.validation import ProtocolValidationService
 
 
 def editor_errors(task: ProtocolTask) -> list[str]:
-    errors = []
-    if not task.number.strip():
-        errors.append("Не указан номер")
-    if not task.title.strip():
-        errors.append("Не заполнено поручение")
-    if not task.assignments:
-        errors.append("Не выбран исполнитель")
-    elif task.protocol.source_type == "docx_import" and any(
-        not assignment.employee_id for assignment in task.assignments
-    ):
-        errors.append("Пользователь не найден")
-    if not task.deadline:
-        errors.append("Не указан срок")
-    if not task.section_id:
-        errors.append("Не выбран раздел")
-    return errors
+    return [issue.message for issue in ProtocolValidationService().validate_task(task)]
 
 
 def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask:

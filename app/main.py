@@ -49,6 +49,7 @@ from app.services.protocols.governance import (
     register_document,
     transition,
 )
+from app.services.validation import ProtocolValidationService
 
 app = FastAPI(title="Protocol Management System")
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
@@ -82,24 +83,7 @@ async def controlled_http_error(request: Request, exc: StarletteHTTPException):
 
 
 def readiness_percent(protocol):
-    tasks = list(getattr(protocol, "tasks", []) or [])
-    if not tasks:
-        return 0
-    ready = 0
-    for task in tasks:
-        score = 0
-        score += 1 if task.title else 0
-        score += 1 if task.assignments else 0
-        score += 1 if task.deadline else 0
-        score += (
-            1
-            if task.validation_status in {"ready", "validated", "done"}
-            or protocol.status == "ready"
-            else 0
-        )
-        score += 1 if protocol.status not in {"validation_required", "error"} else 0
-        ready += score / 5
-    return int(100 * ready / len(tasks))
+    return ProtocolValidationService().validate(protocol).readiness_percent
 
 
 def common_context(active_page=None, breadcrumb=None, **extra):
@@ -789,20 +773,20 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
             .order_by(TaskAssessment.created_at.desc())
         ).all()
     }
+    validation = ProtocolValidationService().validate(p)
+    by_task = {}
+    for issue in validation.issues:
+        by_task.setdefault(issue.task_id, []).append(issue)
     rows = []
-    errors = warnings = without_assignee = without_deadline = 0
+    without_assignee = without_deadline = 0
     for t in p.tasks:
-        e, w = validate_task(t)
-        errors += len(e)
-        warnings += len(w)
+        task_issues = by_task.get(t.id, [])
+        e = [issue.message for issue in task_issues if issue.critical]
+        w = [issue.message for issue in task_issues if not issue.critical]
         without_assignee += 0 if t.assignments else 1
         without_deadline += 0 if t.deadline else 1
         rows.append((t, e, w, assessments.get(t.id)))
-    progress = int(
-        100
-        * sum(1 for t, _, _, _ in rows if t.assignments and t.deadline and t.title)
-        / max(len(rows), 1)
-    )
+    progress = validation.readiness_percent
     return templates.TemplateResponse(
         request,
         "protocol_card.html",
@@ -811,8 +795,9 @@ def protocol_card(protocol_id: int, request: Request, db: Session = Depends(get_
             "sections": sections,
             "rows": rows,
             "progress": progress,
-            "errors": errors,
-            "warnings": warnings,
+            "errors": len(validation.errors),
+            "warnings": len(validation.warnings),
+            "validation": validation,
             "without_assignee": without_assignee,
             "without_deadline": without_deadline,
             "control_progress": ProtocolControlService.progress(list(p.tasks)),
@@ -864,6 +849,13 @@ def change_protocol_workflow(
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     try:
+        if action == "publish":
+            validation = ProtocolValidationService().validate(protocol)
+            if not validation.can_publish:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Публикация заблокирована: устраните критические ошибки протокола",
+                )
         transition(db, protocol, action, actor)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

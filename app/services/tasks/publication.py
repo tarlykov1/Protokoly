@@ -14,8 +14,8 @@ from app.db.models.domain import (
     PublicationSettings,
 )
 from app.services.demo_publication import protocol_plan
-from app.services.protocols.editor import editor_errors
 from app.services.tasks.gateway import TaskGateway
+from app.services.validation import ProtocolValidationService
 
 
 class PublicationNotAllowedError(ValueError):
@@ -96,10 +96,14 @@ class PublicationService:
             return PublicationResult(existing, reused=True)
         if protocol.status not in {"approved", "published"}:
             raise PublicationNotAllowedError("Можно публиковать только утверждённый протокол")
-        unresolved = [task.number for task in protocol.tasks if "Пользователь не найден" in editor_errors(task)]
-        if unresolved:
+        validation = ProtocolValidationService().validate(protocol)
+        if not validation.can_publish:
             raise PublicationNotAllowedError(
-                "Пользователь не найден для поручений: " + ", ".join(unresolved)
+                "Публикация заблокирована: "
+                + "; ".join(
+                    f"{issue.task_number}: {issue.message}" if issue.task_number else issue.message
+                    for issue in validation.errors
+                )
             )
         settings = self.settings_for(protocol)
         rows, errors, _ = protocol_plan(self.db, protocol)
