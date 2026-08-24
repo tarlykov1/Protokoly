@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     JSON,
@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
     event,
     func,
@@ -159,10 +160,28 @@ class Protocol(TimestampMixin, Base):
     version: Mapped[int] = mapped_column(Integer(), default=1, nullable=False)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     protocol_type: Mapped[str] = mapped_column(String(64), default="protocol")
+    document_type: Mapped[str] = mapped_column(String(32), default="protocol")
     title: Mapped[str] = mapped_column(String(500))
     number: Mapped[str | None] = mapped_column(String(64))
     meeting_date: Mapped[date | None] = mapped_column(Date())
+    meeting_time: Mapped[time | None] = mapped_column(Time())
     location: Mapped[str | None] = mapped_column(String(500))
+    meeting_location: Mapped[str | None] = mapped_column(String(500))
+    meeting_format: Mapped[str | None] = mapped_column(String(32))
+    organization_name: Mapped[str | None] = mapped_column(String(500))
+    event_type: Mapped[str | None] = mapped_column(String(255))
+    event_title: Mapped[str | None] = mapped_column(String(500))
+    meeting_topic: Mapped[str | None] = mapped_column(String(500))
+    agenda_basis: Mapped[str | None] = mapped_column(Text())
+    chairperson_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    chairperson_snapshot: Mapped[str | None] = mapped_column(String(255))
+    secretary_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    secretary_snapshot: Mapped[str | None] = mapped_column(String(255))
+    responsible_department: Mapped[str | None] = mapped_column(String(255))
+    project_label: Mapped[str | None] = mapped_column(String(255))
+    footer_notes: Mapped[str | None] = mapped_column(Text())
+    prepared_by: Mapped[str | None] = mapped_column(String(255))
+    approved_by: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="draft")
     source_type: Mapped[str] = mapped_column(String(32), default="manual")
     source_filename: Mapped[str | None] = mapped_column(String(255))
@@ -177,14 +196,29 @@ class Protocol(TimestampMixin, Base):
     participant_groups: Mapped[list["ProtocolParticipantGroup"]] = relationship(
         back_populates="protocol", cascade="all, delete-orphan"
     )
+    signatories: Mapped[list["ProtocolSignatory"]] = relationship(
+        back_populates="protocol",
+        cascade="all, delete-orphan",
+        order_by="ProtocolSignatory.sort_order",
+    )
+    chairperson_employee: Mapped["Employee | None"] = relationship(
+        foreign_keys=[chairperson_employee_id]
+    )
+    secretary_employee: Mapped["Employee | None"] = relationship(
+        foreign_keys=[secretary_employee_id]
+    )
     publication_settings: Mapped["PublicationSettings | None"] = relationship(
         back_populates="protocol", cascade="all, delete-orphan", uselist=False
     )
     history: Mapped[list["ProtocolHistory"]] = relationship(
-        back_populates="protocol", cascade="all, delete-orphan", order_by="ProtocolHistory.created_at.desc()"
+        back_populates="protocol",
+        cascade="all, delete-orphan",
+        order_by="ProtocolHistory.created_at.desc()",
     )
     document_versions: Mapped[list["ProtocolDocumentVersion"]] = relationship(
-        back_populates="protocol", cascade="all, delete-orphan", order_by="ProtocolDocumentVersion.version.desc()"
+        back_populates="protocol",
+        cascade="all, delete-orphan",
+        order_by="ProtocolDocumentVersion.version.desc()",
     )
     publication_runs: Mapped[list["PublicationRun"]] = relationship(
         back_populates="protocol", cascade="all, delete-orphan", order_by="PublicationRun.id"
@@ -196,12 +230,31 @@ class ProtocolHistory(Base):
 
     __tablename__ = "protocol_history"
     id: Mapped[int] = mapped_column(primary_key=True)
-    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    protocol_id: Mapped[int] = mapped_column(
+        ForeignKey("protocols.id", ondelete="CASCADE"), index=True
+    )
     event_type: Mapped[str] = mapped_column(String(64), index=True)
     user: Mapped[str] = mapped_column(String(255))
     details: Mapped[dict] = mapped_column(JSON(), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     protocol: Mapped[Protocol] = relationship(back_populates="history")
+
+
+class ProtocolSignatory(Base):
+    """Ordered, historical snapshot of a person shown in the signature block."""
+
+    __tablename__ = "protocol_signatories"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(
+        ForeignKey("protocols.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(255))
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="SET NULL"))
+    name_snapshot: Mapped[str] = mapped_column(String(255))
+    position_snapshot: Mapped[str | None] = mapped_column(String(255))
+    sort_order: Mapped[int] = mapped_column(Integer(), default=0)
+    protocol: Mapped[Protocol] = relationship(back_populates="signatories")
+    employee: Mapped[Employee | None] = relationship()
 
 
 class ProtocolDocumentVersion(Base):
@@ -210,11 +263,15 @@ class ProtocolDocumentVersion(Base):
     __tablename__ = "protocol_document_versions"
     __table_args__ = (UniqueConstraint("protocol_id", "version"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    protocol_id: Mapped[int] = mapped_column(
+        ForeignKey("protocols.id", ondelete="CASCADE"), index=True
+    )
     version: Mapped[int] = mapped_column(Integer())
     user: Mapped[str] = mapped_column(String(255))
     file_url: Mapped[str] = mapped_column(String(1000))
-    exported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    exported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     protocol: Mapped[Protocol] = relationship(back_populates="document_versions")
 
 
@@ -549,7 +606,9 @@ class EditPresence(Base):
     __tablename__ = "edit_presence"
     __table_args__ = (UniqueConstraint("protocol_id", "username"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    protocol_id: Mapped[int] = mapped_column(
+        ForeignKey("protocols.id", ondelete="CASCADE"), index=True
+    )
     username: Mapped[str] = mapped_column(String(255))
     request_id: Mapped[str | None] = mapped_column(String(128))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

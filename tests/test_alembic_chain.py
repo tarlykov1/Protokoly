@@ -30,6 +30,7 @@ def test_alembic_revisions_form_single_ordered_chain():
         "0016",
         "0017_corporate_governance",
         "0018",
-        "0019_reporting",
+            "0019_reporting",
+            "0020_protocol_document_fields",
     ]
     assert len(scripts.get_heads()) == 1

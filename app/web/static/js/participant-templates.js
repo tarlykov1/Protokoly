@@ -1,28 +1,21 @@
 (() => {
-  const request = async (path, options) => {
-    const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
-    if (!response.ok) throw new Error((await response.json()).detail || 'Не удалось выполнить действие');
-    return response.json();
-  };
-  document.querySelector('#template-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    await request('/employee-lists', {method: 'POST', body: JSON.stringify({name: form.name.value, employee_ids: [...form.employee_ids.selectedOptions].map(item => +item.value)})});
-    location.reload();
-  });
-  document.addEventListener('click', async event => {
-    const card = event.target.closest('[data-template-id]');
-    if (card && event.target.closest('.edit-template')) {
-      const name = prompt('Новое название шаблона', card.querySelector('.template-name').textContent.trim());
-      if (name) { await request(`/employee-lists/${card.dataset.templateId}`, {method: 'PUT', body: JSON.stringify({name})}); location.reload(); }
-    }
-    if (card && event.target.closest('.copy-template')) {
-      await request(`/employee-lists/${card.dataset.templateId}/copy`, {method: 'POST', body: '{}'});
-      location.reload();
-    }
-    if (card && event.target.closest('.delete-template') && confirm('Удалить шаблон?')) {
-      await request(`/employee-lists/${card.dataset.templateId}`, {method: 'DELETE'});
-      card.remove();
-    }
-  });
+  const modalEl=document.querySelector('#composition-modal'), form=document.querySelector('#composition-form');
+  const modal=modalEl && bootstrap.Modal.getOrCreateInstance(modalEl); let templateId=null, dirty=false;
+  const request=async(path,options={})=>{const response=await fetch(path,{headers:{'Content-Type':'application/json'},...options});if(!response.ok)throw new Error((await response.json()).detail||'Не удалось выполнить действие');return response.json();};
+  const boxes=()=>[...document.querySelectorAll('.employee-choice input')];
+  const render=()=>{const selected=boxes().filter(x=>x.checked);document.querySelector('#composition-count').textContent=`${selected.length} участников`;document.querySelector('#current-members').innerHTML=selected.map(x=>{const label=x.closest('label');return `<label class="d-flex align-items-center gap-2 border-bottom py-2"><input class="member-remove-select" type="checkbox" data-id="${x.value}"><span>${label.querySelector('span').innerHTML}</span><button type="button" class="btn btn-sm btn-link text-danger ms-auto remove-one" data-id="${x.value}">Удалить</button></label>`}).join('')||'<p class="muted">Список пуст</p>';};
+  const open=async(id=null)=>{templateId=id;boxes().forEach(x=>x.checked=false);document.querySelector('#composition-name').value='';if(id){const data=await request(`/employee-lists/${id}/details`);document.querySelector('#composition-name').value=data.name;const ids=new Set(data.employee_ids.map(String));boxes().forEach(x=>x.checked=ids.has(x.value));}dirty=false;render();modal.show();};
+  document.querySelector('#new-template')?.addEventListener('click',()=>open());
+  document.querySelector('#composition-search')?.addEventListener('input',e=>document.querySelectorAll('.employee-choice').forEach(label=>label.hidden=!label.dataset.search.includes(e.target.value.toLowerCase())));
+  document.querySelector('#select-filtered')?.addEventListener('click',()=>{document.querySelectorAll('.employee-choice:not([hidden]) input').forEach(x=>x.checked=true);dirty=true;render();});
+  document.querySelector('#clear-all')?.addEventListener('click',()=>{boxes().forEach(x=>x.checked=false);dirty=true;render();});
+  document.querySelector('#clear-list')?.addEventListener('click',()=>{boxes().forEach(x=>x.checked=false);dirty=true;render();});
+  document.querySelector('#remove-selected')?.addEventListener('click',()=>{document.querySelectorAll('.member-remove-select:checked').forEach(x=>{const source=boxes().find(b=>b.value===x.dataset.id);if(source)source.checked=false;});dirty=true;render();});
+  document.querySelector('#current-members')?.addEventListener('click',e=>{const button=e.target.closest('.remove-one');if(button){boxes().find(x=>x.value===button.dataset.id).checked=false;dirty=true;render();}});
+  document.querySelector('#employee-options')?.addEventListener('change',()=>{dirty=true;render();});
+  const save=async()=>{const payload={name:document.querySelector('#composition-name').value,employee_ids:boxes().filter(x=>x.checked).map(x=>+x.value)};await request(templateId?`/employee-lists/${templateId}`:'/employee-lists',{method:templateId?'PUT':'POST',body:JSON.stringify(payload)});dirty=false;};
+  form?.addEventListener('submit',async e=>{e.preventDefault();try{await save();location.reload();}catch(error){alert(error.message);}});
+  document.querySelectorAll('.composition-close').forEach(button=>button.addEventListener('click',async()=>{try{const changed=dirty;if(changed)await save();modal.hide();if(changed)location.reload();}catch(error){alert(`Не удалось сохранить: ${error.message}`);}}));
+  document.querySelector('#create-employee')?.addEventListener('click',async()=>{try{const employee=await request('/employee-lists/employees',{method:'POST',body:JSON.stringify({full_name:document.querySelector('#new-employee-name').value,position:document.querySelector('#new-employee-position').value,department:document.querySelector('#new-employee-department').value})});const label=document.createElement('label');label.className='employee-choice';label.dataset.search=`${employee.full_name} ${employee.position||''} ${employee.department||''}`.toLowerCase();label.innerHTML=`<input type="checkbox" value="${employee.id}" checked> <span><strong>${employee.full_name}</strong><small class="d-block muted">${employee.position||'Должность не указана'} · ${employee.department||'Подразделение не указано'}</small></span>`;document.querySelector('#employee-options').append(label);dirty=true;render();}catch(error){alert(error.message);}});
+  document.addEventListener('click',async e=>{const card=e.target.closest('[data-template-id]');if(!card)return;const id=card.dataset.templateId;if(e.target.closest('.edit-composition'))open(id);if(e.target.closest('.rename-template')){const name=prompt('Новое название шаблона',card.querySelector('.template-name').textContent.trim());if(name){await request(`/employee-lists/${id}`,{method:'PUT',body:JSON.stringify({name})});location.reload();}}if(e.target.closest('.copy-template')){await request(`/employee-lists/${id}/copy`,{method:'POST',body:'{}'});location.reload();}if(e.target.closest('.delete-template')&&confirm('Удалить шаблон?')){await request(`/employee-lists/${id}`,{method:'DELETE'});card.remove();}});
 })();

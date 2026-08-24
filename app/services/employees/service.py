@@ -33,14 +33,23 @@ class EmployeeDirectoryService:
         statement = select(Employee)
         if query.strip():
             pattern = f"%{query.strip()}%"
-            statement = statement.where(or_(Employee.full_name.ilike(pattern), Employee.email.ilike(pattern)))
+            statement = statement.where(
+                or_(
+                    Employee.full_name.ilike(pattern),
+                    Employee.email.ilike(pattern),
+                    Employee.department.ilike(pattern),
+                    Employee.position.ilike(pattern),
+                )
+            )
         if source:
             statement = statement.where(Employee.source_system == source)
         if department:
             statement = statement.where(Employee.department == department)
         return self.db.scalars(statement.order_by(Employee.full_name)).all()
 
-    def sync(self, provider: EmployeeProvider, settings: EmployeeSourceSettings | None = None) -> int:
+    def sync(
+        self, provider: EmployeeProvider, settings: EmployeeSourceSettings | None = None
+    ) -> int:
         count = 0
         for record in provider.load():
             employee = self.db.scalar(

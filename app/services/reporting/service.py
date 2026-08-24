@@ -33,7 +33,7 @@ class ReportService:
         if query.project_ids:
             stmt = stmt.where(Protocol.project_id.in_(query.project_ids))
         if query.document_type and query.document_type != "all":
-            stmt = stmt.where(Protocol.protocol_type == query.document_type)
+            stmt = stmt.where(Protocol.document_type == query.document_type)
         if query.protocol_status:
             stmt = stmt.where(Protocol.status == query.protocol_status)
         if query.meeting_from:
@@ -109,7 +109,7 @@ class ReportService:
             event = (task.protocol.title or (parent.title if parent else "") or "").strip()
             row = TaskReportRow(
                 task.id, task.number, task.protocol_id, task.protocol.title or "",
-                task.protocol.protocol_type, task.protocol.meeting_date,
+                task.protocol.document_type, task.protocol.meeting_date,
                 task.protocol.project.name if task.protocol.project else "",
                 sections.get(task.section_id, ""), task.title or "", names[0] if names else "",
                 ", ".join(names[1:]), departments[0] if departments else "",
