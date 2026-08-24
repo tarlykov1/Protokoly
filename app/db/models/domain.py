@@ -326,6 +326,8 @@ class ProtocolTask(TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text())
     acceptance_criteria: Mapped[str | None] = mapped_column(Text())
     deadline: Mapped[date | None] = mapped_column(Date())
+    original_deadline: Mapped[date | None] = mapped_column(Date())
+    include_in_report: Mapped[bool] = mapped_column(Boolean(), default=True)
     priority: Mapped[str | None] = mapped_column(String(32))
     create_as_subtasks: Mapped[bool] = mapped_column(Boolean(), default=False)
     is_controlled: Mapped[bool] = mapped_column(Boolean(), default=False)
@@ -575,6 +577,31 @@ class ImportSession(Base):
     protocol_id: Mapped[int | None] = mapped_column(ForeignKey("protocols.id"))
     project: Mapped[Project] = relationship()
     protocol: Mapped[Protocol | None] = relationship()
+
+
+class SavedReportView(Base):
+    __tablename__ = "saved_report_views"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    owner: Mapped[str] = mapped_column(String(255), index=True)
+    filters_json: Mapped[dict] = mapped_column(JSON(), default=dict)
+    report_type: Mapped[str] = mapped_column(String(64), default="tasks")
+    shared: Mapped[bool] = mapped_column(Boolean(), default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReportRun(Base):
+    __tablename__ = "report_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_type: Mapped[str] = mapped_column(String(64), index=True)
+    user: Mapped[str] = mapped_column(String(255), index=True)
+    filters_json: Mapped[dict] = mapped_column(JSON(), default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    file_path: Mapped[str | None] = mapped_column(String(1000))
+    file_url: Mapped[str | None] = mapped_column(String(1000))
+    error_message: Mapped[str | None] = mapped_column(Text())
 
 
 @event.listens_for(Session, "before_flush")

@@ -1,0 +1,8 @@
+<form class="report-panel report-filter" method="get">
+<label>Период с<input class="form-control" type="date" name="period_start" value="{{ dataset.query.period_start or '' }}"></label><label>по<input class="form-control" type="date" name="period_end" value="{{ dataset.query.period_end or '' }}"></label>
+<label>Тип документа<select class="form-select" name="document_type"><option value="all">Все</option><option value="protocol">Протокол</option><option value="memo">МЕМО</option></select></label>
+<label>Проекты<select class="form-select" name="project_id"><option value="">Все</option>{% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></label>
+<label>Статус поручения<input class="form-control" name="task_status" value="{{ dataset.query.task_status or '' }}"></label>
+<div class="form-check"><input class="form-check-input" type="checkbox" name="overdue" value="true" id="overdue"><label for="overdue">Просроченные</label></div><div class="form-check"><input class="form-check-input" type="checkbox" name="weekly" value="true" id="weekly"><label for="weekly">Недельный отчёт</label></div><div class="form-check"><input class="form-check-input" type="checkbox" name="include_deferred" value="true" id="deferred"><label for="deferred">Включать отложенные</label></div>
+<button class="btn btn-primary">Применить</button>
+</form>
