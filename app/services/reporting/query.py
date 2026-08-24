@@ -45,4 +45,10 @@ def parse_report_query(query_string: str) -> ReportQuery:
         reportable_only=bool(_bool(q, "reportable_only")),
         weekly=bool(_bool(q, "weekly")),
         include_deferred=bool(_bool(q, "include_deferred")),
+        event=q.get("event", [None])[-1],
+        project=q.get("project", [None])[-1],
+        assignee=q.get("assignee", [None])[-1],
+        department=q.get("department", [None])[-1],
+        problem_only=bool(_bool(q, "problem_only")),
+        data_issue=q.get("data_issue", [None])[-1],
     )

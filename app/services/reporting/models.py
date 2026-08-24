@@ -29,6 +29,12 @@ class ReportQuery:
     reportable_only: bool = False
     weekly: bool = False
     include_deferred: bool = False
+    event: str | None = None
+    project: str | None = None
+    assignee: str | None = None
+    department: str | None = None
+    problem_only: bool = False
+    data_issue: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result = {}
@@ -63,6 +69,24 @@ class TaskReportRow:
     bitrix_url: str
     protocol_url: str
     assignee_id: int | None = None
+    protocol_number: str = ""
+    event: str = ""
+    description: str = ""
+    assignees: tuple[str, ...] = ()
+    departments: tuple[str, ...] = ()
+    parent_task_id: int | None = None
+    normalized_status: str = "in_progress"
+    status_label: str = "В работе"
+    overdue: bool = False
+    completed_in_time: bool = False
+    completed_late: bool = False
+    carried_over: bool = False
+    is_root: bool = False
+    included: bool = True
+    tags: tuple[str, ...] = ()
+    unknown_employee: bool = False
+    missing_bitrix_user_id: bool = False
+    sync_error: bool = False
 
 
 @dataclass
@@ -76,3 +100,5 @@ class ReportDataset:
     departments: list[dict[str, Any]] = field(default_factory=list)
     projects: list[dict[str, Any]] = field(default_factory=list)
     protocols: list[dict[str, Any]] = field(default_factory=list)
+    dynamics: list[dict[str, Any]] = field(default_factory=list)
+    data_quality: dict[str, int] = field(default_factory=dict)
