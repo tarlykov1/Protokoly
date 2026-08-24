@@ -1,19 +1,27 @@
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.request_context import request_id_var
 from app.core.security import sanitize_payload
-from app.db.models.domain import ImportSession, Project, Protocol, ProtocolTask
+from app.db.models.domain import (
+    ImportSession,
+    Project,
+    Protocol,
+    ProtocolTask,
+    ReportRun,
+    SavedReportView,
+)
 from app.db.session import get_db
 from app.services.auth import CurrentUser, Permission, current_user, require, require_admin
 from app.services.export import ProtocolDocxExporter
@@ -49,6 +57,9 @@ from app.services.protocols.governance import (
     register_document,
     transition,
 )
+from app.services.reporting.excel_exporter import ExcelReportExporter
+from app.services.reporting.query import parse_report_query
+from app.services.reporting.service import ReportService
 from app.services.validation import ProtocolValidationService
 
 app = FastAPI(title="Protocol Management System")
@@ -65,19 +76,40 @@ async def correlation_id(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception:
-        logger.exception("Unhandled request error request_id=%s path=%s", request_id, request.url.path)
-        response = JSONResponse({"title": "Не удалось выполнить операцию", "detail": "Внутренняя ошибка сервера", "request_id": request_id}, status_code=500)
+        logger.exception(
+            "Unhandled request error request_id=%s path=%s", request_id, request.url.path
+        )
+        response = JSONResponse(
+            {
+                "title": "Не удалось выполнить операцию",
+                "detail": "Внутренняя ошибка сервера",
+                "request_id": request_id,
+            },
+            status_code=500,
+        )
     finally:
         request_id_var.reset(token)
     response.headers["X-Request-ID"] = request_id
-    logger.info("request_id=%s method=%s path=%s status=%s", request_id, request.method, request.url.path, response.status_code)
+    logger.info(
+        "request_id=%s method=%s path=%s status=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        response.status_code,
+    )
     return response
 
 
 @app.exception_handler(StarletteHTTPException)
 async def controlled_http_error(request: Request, exc: StarletteHTTPException):
-    payload = {"title": "Не удалось выполнить операцию", "detail": str(exc.detail), "request_id": getattr(request.state, "request_id", str(uuid4()))}
-    if "application/json" in request.headers.get("accept", "") or request.url.path.startswith(("/ready", "/system/diagnostics")):
+    payload = {
+        "title": "Не удалось выполнить операцию",
+        "detail": str(exc.detail),
+        "request_id": getattr(request.state, "request_id", str(uuid4())),
+    }
+    if "application/json" in request.headers.get("accept", "") or request.url.path.startswith(
+        ("/ready", "/system/diagnostics")
+    ):
         return JSONResponse(payload, status_code=exc.status_code)
     return templates.TemplateResponse(request, "error.html", payload, status_code=exc.status_code)
 
@@ -121,7 +153,11 @@ def ready(db: Session = Depends(get_db)):
 
 @app.get("/system/health")
 def system_health(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse(request, "system_health.html", common_context("Состояние системы", "Состояние системы", snapshot=system_snapshot(db)))
+    return templates.TemplateResponse(
+        request,
+        "system_health.html",
+        common_context("Состояние системы", "Состояние системы", snapshot=system_snapshot(db)),
+    )
 
 
 @app.get("/system/diagnostics")
@@ -130,7 +166,13 @@ def system_diagnostics(_: CurrentUser = Depends(require_admin), db: Session = De
 
 
 @app.get("/system/integration-issues")
-def integration_issues(request: Request, unresolved: bool = True, operation: str = "", _: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)):
+def integration_issues(
+    request: Request,
+    unresolved: bool = True,
+    operation: str = "",
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     from app.db.models.domain import IntegrationLog
 
     stmt = select(IntegrationLog).where(IntegrationLog.status == "error")
@@ -139,11 +181,23 @@ def integration_issues(request: Request, unresolved: bool = True, operation: str
     if operation:
         stmt = stmt.where(IntegrationLog.operation.ilike(f"%{operation}%"))
     issues = db.scalars(stmt.order_by(IntegrationLog.id.desc()).limit(200)).all()
-    return templates.TemplateResponse(request, "integration_issues.html", common_context("Интеграции", "Проблемы интеграций", issues=issues, operation=operation, unresolved=unresolved))
+    return templates.TemplateResponse(
+        request,
+        "integration_issues.html",
+        common_context(
+            "Интеграции",
+            "Проблемы интеграций",
+            issues=issues,
+            operation=operation,
+            unresolved=unresolved,
+        ),
+    )
 
 
 @app.post("/system/integration-issues/{issue_id}/resolve")
-def resolve_integration_issue(issue_id: int, _: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)):
+def resolve_integration_issue(
+    issue_id: int, _: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)
+):
     from datetime import UTC, datetime
 
     from app.db.models.domain import IntegrationLog
@@ -157,10 +211,18 @@ def resolve_integration_issue(issue_id: int, _: CurrentUser = Depends(require_ad
 
 
 @app.post("/protocols/{protocol_id}/presence")
-def protocol_presence(protocol_id: int, request: Request, actor: CurrentUser = Depends(current_user), db: Session = Depends(get_db)):
+def protocol_presence(
+    protocol_id: int,
+    request: Request,
+    actor: CurrentUser = Depends(current_user),
+    db: Session = Depends(get_db),
+):
     if not db.get(Protocol, protocol_id):
         raise HTTPException(404, "Протокол не найден")
-    return {"editors": touch_presence(db, protocol_id, actor.username, request.state.request_id), "ttl_seconds": 90}
+    return {
+        "editors": touch_presence(db, protocol_id, actor.username, request.state.request_id),
+        "ttl_seconds": 90,
+    }
 
 
 @app.get("/")
@@ -211,6 +273,148 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "overdue_count": corporate["overdue_count"],
         },
     )
+
+
+def report_context(request: Request, db: Session, report_type: str = "dashboard"):
+    query = parse_report_query(request.url.query)
+    dataset = ReportService(db).build(query)
+    actor = current_user(request)
+    views = db.scalars(
+        select(SavedReportView)
+        .where(or_(SavedReportView.owner == actor.username, SavedReportView.shared.is_(True)))
+        .order_by(SavedReportView.name)
+    ).all()
+    return common_context(
+        "Отчёты и аналитика",
+        "Отчёты и аналитика",
+        dataset=dataset,
+        report_type=report_type,
+        projects=db.scalars(select(Project).order_by(Project.name)).all(),
+        views=views,
+    )
+
+
+@app.get("/reports")
+@app.get("/reports/dashboard")
+def reports_dashboard(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request, "reports_dashboard.html", report_context(request, db)
+    )
+
+
+@app.get("/reports/tasks")
+@app.get("/reports/assignees")
+@app.get("/reports/departments")
+def reports_table(request: Request, db: Session = Depends(get_db)):
+    report_type = request.url.path.rsplit("/", 1)[-1]
+    return templates.TemplateResponse(
+        request, "reports_table.html", report_context(request, db, report_type)
+    )
+
+
+@app.get("/reports/management")
+def reports_management(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request, "reports_dashboard.html", report_context(request, db, "management")
+    )
+
+
+@app.get("/reports/control")
+def reports_control(
+    request: Request, _: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)
+):
+    return templates.TemplateResponse(
+        request, "reports_table.html", report_context(request, db, "control")
+    )
+
+
+@app.post("/reports/views")
+def save_report_view(
+    name: str = Form(...),
+    report_type: str = Form("tasks"),
+    filters_json: str = Form("{}"),
+    shared: bool = Form(False),
+    actor: CurrentUser = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    import json
+
+    try:
+        filters = json.loads(filters_json)
+    except ValueError:
+        raise HTTPException(422, "Некорректные фильтры") from None
+    if shared and actor.role.value != "administrator":
+        raise HTTPException(403, "Общие представления создаёт администратор")
+    db.add(
+        SavedReportView(
+            name=name,
+            owner=actor.username,
+            filters_json=filters,
+            report_type=report_type,
+            shared=shared,
+        )
+    )
+    db.commit()
+    return RedirectResponse("/reports", status_code=303)
+
+
+@app.get("/reports/export.xlsx")
+def reports_export(
+    request: Request, actor: CurrentUser = Depends(current_user), db: Session = Depends(get_db)
+):
+    query = parse_report_query(request.url.query)
+    dataset = ReportService(db).build(query)
+    run = ReportRun(
+        report_type="tasks", user=actor.username, filters_json=query.as_dict(), status="running"
+    )
+    db.add(run)
+    db.flush()
+    directory = Path("var/reports")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"report-{run.id}.xlsx"
+    try:
+        path.write_bytes(ExcelReportExporter().export(dataset, user=actor.username))
+        run.status = "completed"
+        run.completed_at = datetime.now(UTC)
+        run.file_path = str(path)
+        run.file_url = f"/reports/archive/{run.id}/download"
+        db.commit()
+    except Exception as exc:
+        run.status = "failed"
+        run.error_message = str(exc)
+        db.commit()
+        raise
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=path.name,
+    )
+
+
+@app.get("/reports/archive")
+def reports_archive(
+    request: Request, actor: CurrentUser = Depends(current_user), db: Session = Depends(get_db)
+):
+    stmt = select(ReportRun).order_by(ReportRun.created_at.desc())
+    if actor.role.value != "administrator":
+        stmt = stmt.where(ReportRun.user == actor.username)
+    return templates.TemplateResponse(
+        request,
+        "reports_archive.html",
+        common_context("Отчёты и аналитика", "Архив отчётов", runs=db.scalars(stmt).all()),
+    )
+
+
+@app.get("/reports/archive/{run_id}/download")
+def report_download(
+    run_id: int, actor: CurrentUser = Depends(current_user), db: Session = Depends(get_db)
+):
+    run = db.get(ReportRun, run_id)
+    if not run or (run.user != actor.username and actor.role.value != "administrator"):
+        raise HTTPException(404, "Отчёт не найден")
+    if run.status != "completed" or not run.file_path or not Path(run.file_path).is_file():
+        raise HTTPException(409, "Файл отчёта недоступен")
+    return FileResponse(run.file_path, filename=Path(run.file_path).name)
 
 
 @app.get("/projects")
@@ -576,8 +780,6 @@ def import_sessions(
         ),
     )
 
-
-from fastapi.responses import FileResponse
 
 from app.cli.generate_demo_docx import generate as generate_demo_docx
 from app.cli.reset_demo import reset as reset_demo_data
@@ -1075,7 +1277,9 @@ def save_protocol_editor(
                 record_event(db, protocol, "task_deadline_changed", actor.username, task_id=task.id)
             new_assignees = sorted(a.employee_id for a in task.assignments if a.employee_id)
             if new_assignees != old_assignees:
-                record_event(db, protocol, "task_assignees_changed", actor.username, task_id=task.id)
+                record_event(
+                    db, protocol, "task_assignees_changed", actor.username, task_id=task.id
+                )
     protocol.version += 1
     for task_data in payload.get("tasks", []):
         task = tasks.get(int(task_data["id"]))
@@ -1195,9 +1399,7 @@ def copy_attendees(protocol_id: int, group_id: int, db: Session = Depends(get_db
 
 
 @app.post("/protocols/{protocol_id}/participant-groups/{group_id}/duplicate")
-def duplicate_participant_group(
-    protocol_id: int, group_id: int, db: Session = Depends(get_db)
-):
+def duplicate_participant_group(protocol_id: int, group_id: int, db: Session = Depends(get_db)):
     """Create an independent local copy of a participant list."""
     source = db.get(ProtocolParticipantGroup, group_id)
     protocol = db.get(Protocol, protocol_id)
@@ -1249,7 +1451,10 @@ def save_participant_template(
 
 @app.post("/protocols/{protocol_id}/editor/tasks")
 def add_editor_task(
-    protocol_id: int, request: Request, payload: dict = Body(default={}), db: Session = Depends(get_db)
+    protocol_id: int,
+    request: Request,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
 ):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
@@ -1570,7 +1775,9 @@ def sync_protocol_bitrix(
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     result = BitrixTaskSyncService(db, get_bitrix_gateway(db)).sync(protocol)
-    record_event(db, protocol, "bitrix_synced", actor.username, updated=result.updated, errors=result.errors)
+    record_event(
+        db, protocol, "bitrix_synced", actor.username, updated=result.updated, errors=result.errors
+    )
     db.commit()
     return RedirectResponse(
         f"/protocols/{protocol_id}/control?sync_updated={result.updated}&sync_errors={result.errors}",
