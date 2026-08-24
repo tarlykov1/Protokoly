@@ -87,6 +87,15 @@ class TaskReportRow:
     unknown_employee: bool = False
     missing_bitrix_user_id: bool = False
     sync_error: bool = False
+    # Canonical logical-assignment metadata.  Consumers must not regroup raw ORM tasks.
+    logical_key: str = ""
+    completed_parts: int = 0
+    required_parts: int = 1
+    assignee_links: tuple[tuple[str, str], ...] = ()
+    assignee_reports: tuple[tuple[str, date | None, str], ...] = ()
+    assignment_root_id: int | None = None
+    assignment_root_url: str = ""
+    control_state: str = "not_submitted"
 
 
 @dataclass

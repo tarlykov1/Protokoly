@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -106,7 +107,23 @@ class ReportService:
             normalized = reporting_status(task.deadline, closed, effective_status, control_date)
             overdue_days = days_overdue(task.deadline, closed, effective_status, control_date)
             parent = task_by_id.get(task.parent_task_id)
-            event = (task.protocol.title or (parent.title if parent else "") or "").strip()
+            event = self._clean_event(
+                task.protocol.event_title or task.protocol.title or (parent.title if parent else "")
+            )
+            assignment_links = []
+            for position, assignment in enumerate(assignments):
+                link = next((x for x in task.bitrix_links if x.assignment_id == assignment.id), None)
+                url = ""
+                if link and link.bitrix_task_id:
+                    url = self._bitrix_url(external.external_task_url if external else "", link.bitrix_task_id)
+                elif position == 0 and external:
+                    url = external.external_task_url or ""
+                assignment_links.append((assignment.assignee_name.strip(), url))
+            report_items = tuple(
+                (name, closed, task.control.result_comment or "")
+                for name in names
+                if task.control and task.control.result_comment
+            )
             row = TaskReportRow(
                 task.id, task.number, task.protocol_id, task.protocol.title or "",
                 task.protocol.document_type, task.protocol.meeting_date,
@@ -132,11 +149,95 @@ class ReportService:
                 unknown_employee=any(a.employee is None for a in assignments),
                 missing_bitrix_user_id=any(a.employee and not a.employee.bitrix_user_id for a in assignments),
                 sync_error=any(x.sync_status == "error" for x in task.bitrix_links),
+                logical_key=self._logical_key(task, parent),
+                completed_parts=(len(assignments) or 1) if normalized in {"completed_in_time", "completed_late"} else 0,
+                required_parts=len(assignments) or 1,
+                assignee_links=tuple(assignment_links), assignee_reports=report_items,
+                assignment_root_id=task.id, assignment_root_url=external.external_task_url or "" if external else "",
+                control_state=self._control_state(task, normalized),
             )
             if self._matches(row, query):
                 rows.append(row)
+        rows = self._merge_logical_rows(rows)
         rows.sort(key=lambda r: (r.deadline or date.max, r.protocol_id, r.number))
         return self._dataset(query, rows)
+
+    @staticmethod
+    def _clean_event(value: str | None) -> str:
+        value = "" if value is None or str(value).strip().lower() in {"none", "null", "undefined"} else str(value)
+        return re.sub(r"^[\s☆★⭐📅📌]+|[\s☆★⭐📅📌]+$", "", value).strip()
+
+    @staticmethod
+    def _logical_key(task: ProtocolTask, parent: ProtocolTask | None = None) -> str:
+        """Keep 06 and 06.1 distinct, but fold published copies 06.1/1… into 06.1."""
+        number = re.sub(r"/\d+$", "", ((parent.number if parent else task.number) or "").strip())
+        root_id = task.parent_task_id or task.id
+        # Imported copies often have no ORM parent; protocol + normalized number is stable fallback.
+        if re.search(r"/\d+$", task.number or ""):
+            root_id = number
+        return f"{task.protocol_id}:{root_id}:{number}"
+
+    @staticmethod
+    def _bitrix_url(base: str, task_id: int) -> str:
+        if not base:
+            return ""
+        return re.sub(r"/tasks/task/view/\d+/?(?:\?.*)?$", f"/tasks/task/view/{task_id}/", base)
+
+    @staticmethod
+    def _control_state(task, normalized):
+        if task.control:
+            value = task.control.status.lower()
+            if value in {"rejected", "returned", "revision"}:
+                return "returned"
+            if value in COMPLETED_STATUSES:
+                return "accepted"
+            return "on_control"
+        return "accepted" if normalized.startswith("completed") else "not_submitted"
+
+    @staticmethod
+    def _merge_logical_rows(rows: list[TaskReportRow]) -> list[TaskReportRow]:
+        groups = defaultdict(list)
+        for row in rows:
+            groups[row.logical_key or f"{row.protocol_id}:{row.task_id}"].append(row)
+        merged = []
+        for group in groups.values():
+            root = next((r for r in group if r.parent_task_id is None), group[0])
+            if len(group) == 1:
+                merged.append(root)
+                continue
+            names = tuple(dict.fromkeys(name for r in group for name in r.assignees if name))
+            departments = tuple(dict.fromkeys(name for r in group for name in r.departments if name))
+            links = tuple(dict.fromkeys(item for r in group for item in r.assignee_links if item[0]))
+            reports = tuple(dict.fromkeys(item for r in group for item in r.assignee_reports if item[2]))
+            deadlines = [r.deadline for r in group if r.deadline]
+            closed_dates = [r.closed_at for r in group if r.closed_at]
+            required = sum(r.required_parts for r in group)
+            done = sum(r.completed_parts for r in group)
+            root.number = re.sub(r"/\d+$", "", root.number)
+            root.assignees, root.departments = names, departments
+            root.responsible = names[0] if names else ""
+            root.other_assignees = ", ".join(names[1:])
+            root.deadline = max(deadlines) if deadlines else None
+            root.closed_at = max(closed_dates) if closed_dates else None
+            root.completed_parts, root.required_parts = done, required
+            root.assignee_links, root.assignee_reports = links, reports
+            root.tags = tuple(dict.fromkeys(tag for r in group for tag in r.tags if tag.strip()))
+            root.result = "\n\n————————————————————————\n\n".join(
+                f"{name} — {when.strftime('%d.%m.%Y') if when else ''}\n{text}".strip()
+                for name, when, text in reports
+            )
+            if done == required:
+                root.normalized_status = "completed_late" if any(r.completed_late for r in group) else "completed_in_time"
+            elif any(r.overdue for r in group):
+                root.normalized_status = "overdue"
+            else:
+                root.normalized_status = "in_progress"
+            root.status_label = STATUS_LABELS[root.normalized_status]
+            root.overdue = root.normalized_status == "overdue"
+            root.completed_in_time = root.normalized_status == "completed_in_time"
+            root.completed_late = root.normalized_status == "completed_late"
+            merged.append(root)
+        return merged
 
     @staticmethod
     def _matches(row: TaskReportRow, query: ReportQuery) -> bool:
@@ -185,21 +286,30 @@ class ReportService:
         total = len(rows)
         completed = sum(r.completed_in_time or r.completed_late for r in rows)
         overdue = sum(r.overdue for r in rows)
-        on_time = sum(r.completed_in_time for r in rows)
-        late = sum(r.completed_late for r in rows)
+        # Formal discipline is defined only for protocols; MEMO remains visible in management totals.
+        formal = [r for r in rows if r.document_type == "protocol"]
+        formal_completed = [r for r in formal if r.completed_in_time or r.completed_late]
+        formal_open = [r for r in formal if not (r.completed_in_time or r.completed_late)]
+        on_time = sum(r.completed_in_time for r in formal)
+        late = sum(r.completed_late for r in formal)
         protocol_ids = {r.protocol_id for r in rows}
         kpis = {"events": len({r.event for r in rows if r.event}), "protocols": sum(
             next(r for r in rows if r.protocol_id == pid).document_type == "protocol" for pid in protocol_ids),
             "memos": sum(next(r for r in rows if r.protocol_id == pid).document_type == "memo" for pid in protocol_ids),
-            "tasks": total, "completed": completed,
+            "tasks": total, "assignments": total, "completed": completed,
             "in_progress": sum(r.normalized_status == "in_progress" for r in rows),
-            "overdue": overdue, "unassigned": sum(not r.assignees for r in rows),
+            "on_control": sum(r.control_state == "on_control" for r in rows),
+            "overdue": overdue, "formal_overdue": sum(r.overdue for r in formal), "unassigned": sum(not r.assignees for r in rows),
             "no_deadline": sum(not r.deadline for r in rows),
+            "unknown_employee": sum(r.unknown_employee for r in rows), "sync_error": sum(r.sync_error for r in rows),
             "completion_percent": round(completed * 100 / total, 1) if total else 0,
-            "on_time_percent": round(on_time * 100 / completed, 1) if completed else 0}
-        counts = {"on_time": on_time, "late": late, "overdue_open": overdue,
-                  "in_progress": total - completed - overdue}
-        discipline = {k: {"count": v, "percent": round(v * 100 / total, 1) if total else 0}
+            "on_time_percent": round(on_time * 100 / len(formal_completed), 1) if formal_completed else None,
+            "current_overdue_percent": round(sum(r.overdue for r in formal_open) * 100 / len(formal_open), 1) if formal_open else None}
+        formal_total = len(formal)
+        counts = {"on_time": on_time, "late": late,
+                  "overdue_open": sum(r.overdue for r in formal),
+                  "in_progress": sum(r.normalized_status == "in_progress" for r in formal)}
+        discipline = {k: {"count": v, "percent": round(v * 100 / formal_total, 1) if formal_total else 0}
                       for k, v in counts.items()}
         statuses = {STATUS_LABELS[key]: sum(r.normalized_status == key for r in rows)
                     for key in STATUS_LABELS}
