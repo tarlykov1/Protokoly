@@ -364,8 +364,11 @@ def reports_export(
 ):
     query = parse_report_query(request.url.query)
     dataset = ReportService(db).build(query)
+    report_type = request.query_params.get("view", "tasks")
+    if report_type not in {"tasks", "assignees", "departments"}:
+        raise HTTPException(422, "Неизвестный вид отчёта")
     run = ReportRun(
-        report_type="tasks", user=actor.username, filters_json=query.as_dict(), status="running"
+        report_type=report_type, user=actor.username, filters_json=query.as_dict(), status="running"
     )
     db.add(run)
     db.flush()
@@ -373,7 +376,7 @@ def reports_export(
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"report-{run.id}.xlsx"
     try:
-        path.write_bytes(ExcelReportExporter().export(dataset, user=actor.username))
+        path.write_bytes(ExcelReportExporter().export(dataset, user=actor.username, report_type=report_type))
         run.status = "completed"
         run.completed_at = datetime.now(UTC)
         run.file_path = str(path)

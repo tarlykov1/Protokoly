@@ -59,3 +59,24 @@ def include_in_weekly_report(
         or completed_in_period(closed_at, period_start, period_end)
         or bool(deadline and deadline < period_start and not is_completed(status))
     )
+
+
+STATUS_LABELS = {
+    "completed_in_time": "Выполнено в срок",
+    "completed_late": "Выполнено с нарушением срока",
+    "overdue": "Просрочено",
+    "in_progress": "В работе",
+}
+
+
+def reporting_status(
+    deadline: date | None, closed_at: date | None, status: str, control_date: date
+) -> str:
+    """Return the sole user-facing reporting state at the selected date boundary."""
+    if is_completed(status):
+        if deadline and closed_at and closed_at <= deadline:
+            return "completed_in_time"
+        return "completed_late"
+    if deadline and deadline < control_date:
+        return "overdue"
+    return "in_progress"

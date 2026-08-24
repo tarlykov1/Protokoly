@@ -3,7 +3,7 @@ from io import BytesIO
 from zipfile import ZipFile
 
 from app.services.reporting.excel_exporter import ExcelReportExporter
-from app.services.reporting.metrics import include_in_weekly_report
+from app.services.reporting.metrics import include_in_weekly_report, reporting_status
 from app.services.reporting.models import ReportDataset, ReportQuery, TaskReportRow
 
 START = date(2026, 9, 8)
@@ -84,3 +84,25 @@ def test_excel_uses_exact_dataset_and_preserves_business_number():
         sheet = archive.read("xl/worksheets/sheet1.xml").decode()
     assert "06.1" in sheet
     assert 'autoFilter ref="A6:R7"' in sheet
+
+
+def test_canonical_reporting_statuses_use_closed_date_and_control_boundary():
+    assert reporting_status(START, START, "completed", END) == "completed_in_time"
+    assert reporting_status(START, END, "completed", END) == "completed_late"
+    assert reporting_status(START, None, "new", END) == "overdue"
+    assert reporting_status(END, None, "new", START) == "in_progress"
+
+
+def test_excel_views_are_derived_from_the_same_logical_rows():
+    row = TaskReportRow(
+        1, "06.1", 1, "Протокол", "protocol", START, "Проект", "Раздел", "Текст",
+        "Иванов", "Петров", "Отдел", START, END, None, "new", "", 1,
+        "Просрочено", "42", "https://example.test/42", "/protocols/1",
+        assignees=("Иванов", "Петров"), departments=("Отдел",),
+        normalized_status="overdue", status_label="Просрочено", overdue=True,
+    )
+    dataset = ReportDataset(ReportQuery(), [row], {"tasks": 1, "overdue": 1})
+    exporter = ExcelReportExporter()
+    assert len(exporter._view(dataset, "tasks")[1]) == dataset.kpis["tasks"]
+    assert len(exporter._view(dataset, "assignees")[1]) == 2
+    assert b"None" not in exporter.export(dataset)
