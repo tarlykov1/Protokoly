@@ -106,3 +106,45 @@ def test_excel_views_are_derived_from_the_same_logical_rows():
     assert len(exporter._view(dataset, "tasks")[1]) == dataset.kpis["tasks"]
     assert len(exporter._view(dataset, "assignees")[1]) == 2
     assert b"None" not in exporter.export(dataset)
+
+
+def _row(task_id, number="06.1", protocol_id=1, assignees=("Иванов",), result=""):
+    return TaskReportRow(
+        task_id, number, protocol_id, "Протокол", "protocol", START, "Проект", "Раздел",
+        "Текст", assignees[0] if assignees else "", "", "Отдел", START, END, None,
+        "new", result, 1, "Просрочено", str(task_id), f"https://example.test/{task_id}",
+        f"/protocols/{protocol_id}", assignees=assignees, departments=("Отдел",),
+        normalized_status="overdue", status_label="Просрочено", overdue=True,
+        logical_key=f"{protocol_id}:06.1", assignment_root_id=task_id,
+        assignee_links=tuple((name, f"https://example.test/{task_id}/{i}") for i, name in enumerate(assignees)),
+    )
+
+
+def test_logical_copies_merge_but_decimal_numbers_and_protocols_do_not():
+    from app.services.reporting.service import ReportService
+
+    copies = [_row(1, "06.1/1"), _row(2, "06.1/2"), _row(3, "06.1/3")]
+    merged = ReportService._merge_logical_rows(copies)
+    assert len(merged) == 1
+    assert merged[0].number == "06.1"
+    distinct = [_row(1, "06"), _row(2, "06.1"), _row(3, "06.1", protocol_id=2)]
+    for row in distinct:
+        row.logical_key = f"{row.protocol_id}:{row.number}"
+    assert len(ReportService._merge_logical_rows(distinct)) == 3
+
+
+def test_excel_long_report_and_performer_task_sheets_are_valid_xml():
+    import xml.etree.ElementTree as ET
+
+    row = _row(1, assignees=("Иванов", "Петров", "Сидоров"), result="я" * 31_000)
+    dataset = ReportDataset(ReportQuery(), [row], {"tasks": 1})
+    data = ExcelReportExporter().export(dataset)
+    with ZipFile(BytesIO(data)) as archive:
+        workbook = archive.read("xl/workbook.xml").decode()
+        assert "Полные отчеты" in workbook
+        assert "Задачи исполнителей" in workbook
+        for name in archive.namelist():
+            if name.endswith((".xml", ".rels")):
+                ET.fromstring(archive.read(name))
+    assert len(ExcelReportExporter()._view(dataset, "tasks")[1]) == 1
+    assert len(ExcelReportExporter()._view(dataset, "assignees")[1]) == 3
