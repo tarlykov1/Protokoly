@@ -22,6 +22,7 @@ from app.db.models.domain import (
     ProtocolParticipantGroup,
     ProtocolParticipantGroupMember,
     ProtocolSection,
+    ProtocolSignatory,
     ProtocolTask,
     ProtocolTaskAssignment,
 )
@@ -123,9 +124,9 @@ def resolve_payload(db: Session, payload: dict) -> dict:
         task["assignee_resolution"] = []
         for part in parts:
             n = norm(part.replace("Ответственный:", ""))
-            matching_ids = {
-                e.id for e in employees if norm(e.full_name) == n
-            } | alias_map.get(n, set())
+            matching_ids = {e.id for e in employees if norm(e.full_name) == n} | alias_map.get(
+                n, set()
+            )
             matches = [e for e in employees if e.id in matching_ids and e.is_active]
             if n in lists:
                 task["assignee_resolution"].append(
@@ -149,11 +150,11 @@ def resolve_payload(db: Session, payload: dict) -> dict:
                     }
                 )
                 resolution_errors.append(
-                    f'Исполнитель «{part}»: найдено несколько сотрудников с таким ФИО.'
+                    f"Исполнитель «{part}»: найдено несколько сотрудников с таким ФИО."
                 )
             else:
                 task["assignee_resolution"].append({"raw": part, "status": "not_found"})
-                resolution_errors.append(f'Исполнитель «{part}»: Пользователь не найден.')
+                resolution_errors.append(f"Исполнитель «{part}»: Пользователь не найден.")
         if not parts:
             task["assignee_resolution"] = [{"raw": raw, "status": "not_found"}]
         d_raw = norm(task.get("direction_raw") or "")
@@ -221,6 +222,36 @@ def parse_file(db: Session, session: ImportSession, parser_type: str | None = No
         choice = fallback.confidence(doc)
     # Attendance extraction is parser-independent (specialized parsers focus on tasks).
     result["attendees"] = [item.__dict__ for item in extract_attendees(doc)]
+    # Conservative extraction of explicit, labelled document requisites.  Unlabelled text is
+    # deliberately ignored rather than guessed or matched to an arbitrary directory employee.
+    labels = {
+        "Место": "meeting_location",
+        "Председатель": "chairperson_snapshot",
+        "Секретарь": "secretary_snapshot",
+        "Организация": "organization_name",
+        "Вид мероприятия": "event_type",
+        "Проект": "project_label",
+    }
+    signatories = []
+    in_signatures = False
+    for element in doc.elements:
+        text = re.sub(r"\s+", " ", element.text).strip()
+        if text.upper() == "ПОДПИСИ:":
+            in_signatures = True
+            continue
+        for label, key in labels.items():
+            match = re.match(rf"^{label}\s*:\s*(.+)$", text, re.I)
+            if match and match.group(1).strip():
+                result[key] = match.group(1).strip()
+        if in_signatures:
+            match = re.match(r"(.+?)(?:\s+\([^)]*\))?\s+_+\s+(.+)$", text)
+            if match:
+                signatories.append(
+                    {"role": match.group(1).strip(), "name_snapshot": match.group(2).strip()}
+                )
+            elif text.endswith(":") or text.upper() == "РЕШИЛИ:":
+                in_signatures = False
+    result["signatories"] = signatories
     result["parser_choice"] = {
         "parser_type": choice.parser_type,
         "confidence": choice.confidence,
@@ -386,6 +417,12 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
         title=payload.get("document_title") or session.original_filename,
         number=payload.get("document_number"),
         meeting_date=_as_date(payload.get("meeting_date") or payload.get("document_date")),
+        meeting_location=payload.get("meeting_location"),
+        organization_name=payload.get("organization_name"),
+        event_type=payload.get("event_type"),
+        project_label=payload.get("project_label"),
+        chairperson_snapshot=payload.get("chairperson_snapshot"),
+        secretary_snapshot=payload.get("secretary_snapshot"),
         status="draft",
         source_type="docx_import",
         source_filename=session.original_filename,
@@ -393,6 +430,15 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
     )
     db.add(protocol)
     db.flush()
+    for order, item in enumerate(payload.get("signatories") or []):
+        role, name = (
+            str(item.get("role") or "").strip(),
+            str(item.get("name_snapshot") or "").strip(),
+        )
+        if role and name:
+            protocol.signatories.append(
+                ProtocolSignatory(role=role, name_snapshot=name, sort_order=order)
+            )
     attendees_group = db.scalar(
         select(ProtocolParticipantGroup).where(
             ProtocolParticipantGroup.protocol_id == protocol.id,

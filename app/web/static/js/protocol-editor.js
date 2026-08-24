@@ -9,14 +9,20 @@
   const value = (row, selector) => row.querySelector(selector).value;
   const serialize = () => ({
     protocol: {
+      document_type: document.querySelector('#protocol-document-type').value,
       title: document.querySelector('#protocol-title').value,
       number: document.querySelector('#protocol-number').value,
-      meeting_date: document.querySelector('#protocol-meeting-date').value,
+      meeting_date: document.querySelector('#protocol-meeting-date').value, meeting_time: document.querySelector('#protocol-meeting-time').value,
+      meeting_location: document.querySelector('#protocol-meeting-location').value, meeting_format: document.querySelector('#protocol-meeting-format').value,
+      organization_name: document.querySelector('#protocol-organization').value, event_type: document.querySelector('#protocol-event-type').value, event_title: document.querySelector('#protocol-event-title').value,
+      project_label: document.querySelector('#protocol-project-label').value, agenda_basis: document.querySelector('#protocol-agenda').value,
+      chairperson_snapshot: document.querySelector('#protocol-chairperson').value, secretary_snapshot: document.querySelector('#protocol-secretary').value, responsible_department: document.querySelector('#protocol-responsible-department').value,
       initiator: document.querySelector('#protocol-initiator').value,
       responsible: document.querySelector('#protocol-responsible').value,
-      participants: document.querySelector('#protocol-participants').value,
+      footer_notes: document.querySelector('#protocol-footer-notes').value,
       description: document.querySelector('#protocol-description').value
     },
+    signatories: [...document.querySelectorAll('.signatory-row')].map((row, sort_order) => ({role:row.querySelector('.signatory-role').value,position_snapshot:row.querySelector('.signatory-position').value,name_snapshot:row.querySelector('.signatory-name').value,sort_order})),
     sections: [...document.querySelectorAll('.protocol-section[data-section-id]')].map((section, sort_order) => ({id:section.dataset.sectionId,title:section.querySelector('.section-title').value,sort_order})),
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
@@ -48,6 +54,10 @@
       button.disabled = false;
     }
   });
+
+  const addSignatory=()=>{const row=document.createElement('div');row.className='signatory-row row g-2 mb-2';row.innerHTML='<div class="col-md-3"><input class="form-control signatory-role" placeholder="Роль"></div><div class="col-md-3"><input class="form-control signatory-position" placeholder="Должность"></div><div class="col-md-5"><input class="form-control signatory-name" placeholder="ФИО"></div><div class="col-md-1"><button type="button" class="btn btn-light remove-signatory">×</button></div>';document.querySelector('#signatory-list').append(row);scheduleSave();};
+  document.querySelector('#add-signatory')?.addEventListener('click',addSignatory);
+  document.querySelector('#signatory-list')?.addEventListener('click',e=>{if(e.target.closest('.remove-signatory')){e.target.closest('.signatory-row').remove();scheduleSave();}});
   document.querySelector('#select-all').addEventListener('change', e => { rows().forEach(row => row.querySelector('.task-select').checked = e.target.checked); updateCount(); });
   document.addEventListener('change', e => { if (e.target.matches('.task-select')) updateCount(); });
   const updateCount = () => document.querySelector('#selected-count').textContent = document.querySelectorAll('.task-select:checked').length;

@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from uuid import uuid4
 
@@ -376,7 +376,9 @@ def reports_export(
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"report-{run.id}.xlsx"
     try:
-        path.write_bytes(ExcelReportExporter().export(dataset, user=actor.username, report_type=report_type))
+        path.write_bytes(
+            ExcelReportExporter().export(dataset, user=actor.username, report_type=report_type)
+        )
         run.status = "completed"
         run.completed_at = datetime.now(UTC)
         run.file_path = str(path)
@@ -799,6 +801,7 @@ from app.db.models.domain import (
     ProtocolParticipantGroup,
     ProtocolParticipantGroupMember,
     ProtocolSection,
+    ProtocolSignatory,
     ProtocolTaskAssignment,
     ProtocolTaskLink,
     PublicationRun,
@@ -1243,13 +1246,74 @@ def save_protocol_editor(
     if expected_version is not None and int(expected_version) != protocol.version:
         raise HTTPException(status_code=409, detail="Протокол был изменён другим пользователем.")
     protocol_data = payload.get("protocol", {})
-    for field in ("title", "number", "initiator", "responsible", "participants", "description"):
+    tracked_before = {}
+    text_fields = (
+        "document_type",
+        "title",
+        "number",
+        "meeting_location",
+        "meeting_format",
+        "organization_name",
+        "event_type",
+        "event_title",
+        "meeting_topic",
+        "agenda_basis",
+        "chairperson_snapshot",
+        "secretary_snapshot",
+        "initiator",
+        "responsible",
+        "participants",
+        "responsible_department",
+        "project_label",
+        "description",
+        "footer_notes",
+        "prepared_by",
+        "approved_by",
+    )
+    for field in text_fields:
         if field in protocol_data:
+            tracked_before[field] = getattr(protocol, field)
             cleaned = str(protocol_data[field]).strip()
             setattr(protocol, field, cleaned or ("" if field == "title" else None))
     if "meeting_date" in protocol_data:
         value = protocol_data["meeting_date"]
+        tracked_before["meeting_date"] = protocol.meeting_date
         protocol.meeting_date = date.fromisoformat(value) if value else None
+    if "meeting_time" in protocol_data:
+        tracked_before["meeting_time"] = protocol.meeting_time
+        value = protocol_data["meeting_time"]
+        protocol.meeting_time = time.fromisoformat(value) if value else None
+    for field in ("chairperson_employee_id", "secretary_employee_id"):
+        if field in protocol_data:
+            tracked_before[field] = getattr(protocol, field)
+            value = protocol_data[field]
+            setattr(protocol, field, int(value) if value else None)
+    old_signatories = [
+        (s.role, s.employee_id, s.name_snapshot, s.position_snapshot) for s in protocol.signatories
+    ]
+    if "signatories" in payload:
+        protocol.signatories.clear()
+        for order, item in enumerate(payload.get("signatories") or []):
+            name = str(item.get("name_snapshot") or "").strip()
+            role = str(item.get("role") or "").strip()
+            if name and role:
+                protocol.signatories.append(
+                    ProtocolSignatory(
+                        role=role,
+                        employee_id=int(item["employee_id"]) if item.get("employee_id") else None,
+                        name_snapshot=name,
+                        position_snapshot=str(item.get("position_snapshot") or "").strip() or None,
+                        sort_order=order,
+                    )
+                )
+    changed = [field for field, old in tracked_before.items() if getattr(protocol, field) != old]
+    if changed:
+        record_event(db, protocol, "protocol_details_changed", actor.username, fields=changed)
+    new_signatories = [
+        (s.role, s.employee_id, s.name_snapshot, s.position_snapshot) for s in protocol.signatories
+    ]
+    if new_signatories != old_signatories:
+        record_event(db, protocol, "protocol_signatories_changed", actor.username)
     tasks = {task.id: task for task in protocol.tasks}
     sections = {
         section.id: section
@@ -2221,6 +2285,38 @@ def create_participant_template(payload: dict = Body(...), db: Session = Depends
             status_code=409, detail="Шаблон с таким названием уже существует"
         ) from exc
     return {"id": template.id, "name": template.name}
+
+
+@app.get("/employee-lists/{template_id}/details")
+def participant_template_details(template_id: int, db: Session = Depends(get_db)):
+    template = db.get(ParticipantGroupTemplate, template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    return {
+        "id": template.id,
+        "name": template.name,
+        "employee_ids": [m.employee_id for m in template.members],
+    }
+
+
+@app.post("/employee-lists/employees")
+def create_template_employee(payload: dict = Body(...), db: Session = Depends(get_db)):
+    full_name = str(payload.get("full_name") or "").strip()
+    if not full_name:
+        raise HTTPException(status_code=422, detail="Укажите ФИО")
+    employee = EmployeeDirectoryService(db).create(
+        full_name=full_name,
+        position=str(payload.get("position") or "").strip() or None,
+        department=str(payload.get("department") or "").strip() or None,
+        source_system="manual",
+        is_active=True,
+    )
+    return {
+        "id": employee.id,
+        "full_name": employee.full_name,
+        "position": employee.position,
+        "department": employee.department,
+    }
 
 
 @app.delete("/employee-lists/{template_id}")

@@ -6,7 +6,13 @@ from docx.shared import Pt
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db.models.domain import Protocol, ProtocolSection, ProtocolTask, ProtocolTaskAssignment
+from app.db.models.domain import (
+    Protocol,
+    ProtocolParticipantGroup,
+    ProtocolSection,
+    ProtocolTask,
+    ProtocolTaskAssignment,
+)
 
 
 class ProtocolDocxExporter:
@@ -26,6 +32,10 @@ class ProtocolDocxExporter:
                 selectinload(Protocol.tasks)
                 .selectinload(ProtocolTask.assignments)
                 .selectinload(ProtocolTaskAssignment.employee),
+                selectinload(Protocol.participant_groups).selectinload(
+                    ProtocolParticipantGroup.members
+                ),
+                selectinload(Protocol.signatories),
             )
         )
         if protocol is None:
@@ -49,10 +59,13 @@ class ProtocolDocxExporter:
 
     @staticmethod
     def _assignees(task: ProtocolTask) -> str:
-        return ", ".join(
-            assignment.assignee_name or "—"
-            for assignment in sorted(task.assignments, key=lambda item: item.sort_order)
-        ) or "—"
+        return (
+            ", ".join(
+                assignment.assignee_name or "—"
+                for assignment in sorted(task.assignments, key=lambda item: item.sort_order)
+            )
+            or "—"
+        )
 
     def _build_memo(self, document, protocol, sections, tasks) -> None:
         """Use paragraphs only: this is the canonical MemoProtocolParser contract."""
@@ -63,15 +76,21 @@ class ProtocolDocxExporter:
         heading.runs[0].bold = True
         title = document.add_paragraph(protocol.title)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        if protocol.meeting_date:
+        self._add_header_details(document, protocol)
+        if protocol.meeting_date and not protocol.meeting_location:
             document.add_paragraph(
                 f"г. Санкт-Петербург «{protocol.meeting_date:%d}» "
                 f"{self._month(protocol.meeting_date.month)} {protocol.meeting_date:%Y} года"
             )
-        document.add_paragraph("ОТМЕТИЛИ:").runs[0].bold = True
-        document.add_paragraph(protocol.description or "—")
+        self._add_people(document, protocol)
+        if protocol.description:
+            document.add_paragraph("ОТМЕТИЛИ:").runs[0].bold = True
+            document.add_paragraph(protocol.description)
         document.add_paragraph("РЕШИЛИ:").runs[0].bold = True
-        task_groups = [(section.title, [t for t in tasks if t.section_id == section.id]) for section in sections]
+        task_groups = [
+            (section.title, [t for t in tasks if t.section_id == section.id])
+            for section in sections
+        ]
         unsectioned = [t for t in tasks if not t.section_id]
         if unsectioned:
             task_groups.append(("Без раздела", unsectioned))
@@ -86,13 +105,19 @@ class ProtocolDocxExporter:
                 document.add_paragraph("Исполнители:").runs[0].bold = True
                 document.add_paragraph(self._assignees(task))
                 document.add_paragraph("Срок:").runs[0].bold = True
-                document.add_paragraph(task.deadline.strftime("%d.%m.%Y") if task.deadline else "Без срока")
+                document.add_paragraph(
+                    task.deadline.strftime("%d.%m.%Y") if task.deadline else "Без срока"
+                )
+        self._add_footer(document, protocol)
 
     def _build_print(self, document, protocol, sections, tasks) -> None:
         heading = document.add_paragraph(protocol.title)
         heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
         heading.runs[0].bold = True
         document.add_paragraph(f"Протокол № {protocol.number or '—'}")
+        self._add_header_details(document, protocol)
+        self._add_people(document, protocol)
+        document.add_paragraph("РЕШИЛИ:").runs[0].bold = True
         for section in sections:
             document.add_heading(section.title, level=2)
             for task in [t for t in tasks if t.section_id == section.id]:
@@ -104,7 +129,75 @@ class ProtocolDocxExporter:
                 document.add_paragraph(
                     f"Срок: {task.deadline:%d.%m.%Y}" if task.deadline else "Срок: —"
                 )
+        self._add_footer(document, protocol)
+
+    @staticmethod
+    def _add_header_details(document, protocol) -> None:
+        values = [
+            ("Организация", protocol.organization_name),
+            ("Вид мероприятия", protocol.event_type),
+            ("Мероприятие", protocol.event_title),
+            ("Дата", protocol.meeting_date.strftime("%d.%m.%Y") if protocol.meeting_date else None),
+            ("Время", protocol.meeting_time.strftime("%H:%M") if protocol.meeting_time else None),
+            ("Место", protocol.meeting_location or protocol.location),
+            ("Формат", protocol.meeting_format),
+            ("Тема", protocol.meeting_topic),
+            ("Основание / повестка", protocol.agenda_basis),
+            ("Проект", protocol.project_label),
+            ("Председатель", protocol.chairperson_snapshot),
+            ("Секретарь", protocol.secretary_snapshot),
+        ]
+        for label, value in values:
+            if value:
+                document.add_paragraph(f"{label}: {value}")
+
+    @staticmethod
+    def _add_people(document, protocol) -> None:
+        group = next(
+            (
+                g
+                for g in protocol.participant_groups
+                if g.type == "attendees" or g.name == "Присутствовали"
+            ),
+            None,
+        )
+        if group and group.members:
+            document.add_paragraph("Присутствовали:").runs[0].bold = True
+            for member in group.members:
+                document.add_paragraph(member.name_snapshot)
+
+    @staticmethod
+    def _add_footer(document, protocol) -> None:
+        if protocol.signatories:
+            document.add_paragraph("ПОДПИСИ:").runs[0].bold = True
+            for item in protocol.signatories:
+                position = f" ({item.position_snapshot})" if item.position_snapshot else ""
+                document.add_paragraph(
+                    f"{item.role}{position} __________________ {item.name_snapshot}"
+                )
+        for role, name in (
+            ("Подготовил", protocol.prepared_by),
+            ("Утвердил", protocol.approved_by),
+        ):
+            if name:
+                document.add_paragraph(f"{role} __________________ {name}")
+        if protocol.footer_notes:
+            document.add_paragraph("Примечание:").runs[0].bold = True
+            document.add_paragraph(protocol.footer_notes)
 
     @staticmethod
     def _month(month: int) -> str:
-        return ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")[month - 1]
+        return (
+            "января",
+            "февраля",
+            "марта",
+            "апреля",
+            "мая",
+            "июня",
+            "июля",
+            "августа",
+            "сентября",
+            "октября",
+            "ноября",
+            "декабря",
+        )[month - 1]

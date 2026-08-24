@@ -69,6 +69,23 @@ class ProtocolValidationService:
 
     def validate(self, protocol: Protocol) -> ProtocolValidationResult:
         issues = [issue for task in protocol.tasks for issue in self.validate_task(task)]
+        # Requisites are advisory in an early draft and become critical when the document
+        # enters approval/publication stages.
+        # Review is the gate immediately before approval. Already-approved legacy records
+        # predate these nullable columns and remain publishable after migration.
+        strict = protocol.status == "review"
+        severity = "critical" if strict else "warning"
+        for code, value, message in (
+            ("protocol_title_required", protocol.title, "Не указано название протокола"),
+            ("protocol_date_required", protocol.meeting_date, "Не указана дата заседания"),
+            (
+                "protocol_number_required",
+                protocol.number if protocol.document_type == "protocol" else True,
+                "Не указан номер протокола",
+            ),
+        ):
+            if not value:
+                issues.append(ValidationIssue(code, message, severity))
         # Failed publication attempts remain unresolved until a later successful run.
         runs = sorted(getattr(protocol, "publication_runs", ()) or (), key=lambda run: run.id)
         if runs and runs[-1].failed_items:
