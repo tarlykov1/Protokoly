@@ -14,6 +14,7 @@ from app.services.auth import CurrentUser, Permission
 
 EVENT_LABELS = {
     "protocol_created": "Создание протокола",
+    "protocol_details_changed": "Изменение реквизитов протокола",
     "task_text_changed": "Изменение текста поручения",
     "task_assignees_changed": "Изменение исполнителей",
     "task_deadline_changed": "Изменение срока",
