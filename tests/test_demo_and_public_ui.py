@@ -3,11 +3,13 @@ from pathlib import Path
 from app.core.config import Settings
 
 
-def test_demo_actions_are_enabled_in_local_development_only():
-    local = Settings(_env_file=None, environment="development", demo_mode=False)
+def test_demo_actions_default_on_locally_but_respect_explicit_false():
+    local_default = Settings(_env_file=None, environment="development")
+    local_disabled = Settings(_env_file=None, environment="development", demo_mode=False)
     production = Settings(_env_file=None, environment="production", demo_mode=False)
 
-    assert local.demo_mode is True
+    assert local_default.demo_mode is True
+    assert local_disabled.demo_mode is False
     assert production.demo_mode is False
 
 
@@ -15,7 +17,7 @@ def test_guided_demo_contains_real_examples_and_actions():
     template = Path("app/web/templates/demo_guided.html").read_text(encoding="utf-8")
 
     assert "Не схема процесса" in template
-    assert "Примеры поручений" not in template  # examples are rendered as concrete task cards
+    assert "Готовность демонстрационного протокола" in template
     assert "Исправить замечания в редакторе" in template
     assert "Выполнить тестовую публикацию" in template
     assert "task.title" in template
