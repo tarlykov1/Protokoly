@@ -31,8 +31,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enable_demo_actions_for_local_development(self):
-        """Keep demo actions usable locally while requiring explicit opt-in in production-like modes."""
-        if self.environment.strip().lower() in LOCAL_ENVIRONMENTS:
+        """Enable demo locally only when DEMO_MODE was not explicitly configured."""
+        if (
+            self.environment.strip().lower() in LOCAL_ENVIRONMENTS
+            and "demo_mode" not in self.model_fields_set
+        ):
             self.demo_mode = True
         return self
 
