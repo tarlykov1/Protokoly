@@ -3,7 +3,8 @@
 {% if not protocol %}
 <section class="panel p-4"><h2 class="h5">Демонстрационные данные ещё не подготовлены</h2><p>Создайте пример проекта, сотрудников, протокола и поручений. Реальные данные в системе не затрагиваются.</p><form method="post" action="/demo/seed"><button class="btn btn-primary">Подготовить демонстрационные данные</button></form></section>
 {% else %}
-<div class="mb-4">{{ ui.readiness((step*100/steps|length)|int,'Прогресс демонстрации') }}</div>
+<div class="mb-3">{{ ui.readiness((step*100/steps|length)|int,'Прогресс демонстрации') }}</div>
+<div class="mb-4">{{ ui.readiness(progress,'Готовность демонстрационного протокола') }}</div>
 <div class="row g-3 mb-4"><div class="col-md-4"><div class="card-app h-100"><span class="section-kicker">ПРОЕКТ</span><strong>{{ project.name }}</strong><div class="small muted mt-1">Код: {{ project.code }}</div></div></div><div class="col-md-4"><div class="card-app h-100"><span class="section-kicker">ДОКУМЕНТ</span><strong>{{ protocol.title }}</strong><div class="small muted mt-1">№ {{ protocol.number or '—' }} · {{ protocol.meeting_date or 'дата не указана' }}</div></div></div><div class="col-md-4"><div class="card-app h-100"><span class="section-kicker">ПОРУЧЕНИЯ</span><strong>{{ tasks|length }} поручений</strong><div class="small muted mt-1">Готовность: {{ progress }}%</div></div></div></div>
 <section class="panel p-4 mb-3"><div class="d-flex align-items-center gap-2 mb-2"><span class="status-badge status-draft">Шаг {{ step }} из {{ steps|length }}</span><span class="small muted">{{ steps[step-1][0] }}</span></div><h2>{{ steps[step-1][0] }}</h2><p class="lead">{{ steps[step-1][1] }}</p>
 {% if step == 1 %}
@@ -15,7 +16,7 @@
 {% elif step == 4 %}
 <div class="demo-example-list">{% for task in tasks %}{% if not task.deadline or not task.assignments %}<div class="demo-example-item"><strong>{{ task.number }}. {{ task.title }}</strong><small>{% if not task.deadline %}Нужно указать срок. {% endif %}{% if not task.assignments %}Нужно выбрать исполнителя.{% endif %}</small></div>{% endif %}{% endfor %}</div><div class="mt-3"><a class="btn btn-primary" href="/protocols/{{ protocol.id }}/editor?filter=errors">Исправить замечания в редакторе</a></div>
 {% elif step == 5 %}
-{{ ui.readiness(progress,'Готовность демонстрационного протокола') }}<p class="mt-3">Система не прячет проблему за техническим кодом: пользователь видит, чего именно не хватает, и исправляет это в том же редакторе.</p><a class="btn btn-outline-primary" href="/protocols/{{ protocol.id }}">Посмотреть ошибки и предупреждения</a>
+<p>Система не прячет проблему за техническим кодом: пользователь видит, чего именно не хватает, и исправляет это в том же редакторе.</p><a class="btn btn-outline-primary" href="/protocols/{{ protocol.id }}">Посмотреть ошибки и предупреждения</a>
 {% elif step == 6 %}
 <div class="demo-example-list">{% for task in tasks[:4] %}<div class="demo-example-item"><strong>{{ task.title }}</strong><small>{{ 'Будет создана как группа подзадач' if task.create_as_subtasks else 'Будет создана как отдельная задача' }} · срок {{ task.deadline or 'не указан' }}</small></div>{% endfor %}</div><div class="mt-3"><a class="btn btn-primary" href="/protocols/{{ protocol.id }}/publication-plan">Открыть план задач</a></div>
 {% elif step == 7 %}
