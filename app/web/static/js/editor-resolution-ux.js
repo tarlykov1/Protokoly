@@ -12,7 +12,6 @@
       const value = option.value || option.textContent.trim();
       if (statusLabels[value]) option.textContent = statusLabels[value];
     });
-    document.querySelectorAll('/html/body')
     document.querySelectorAll('.protocol-validation code').forEach(code => code.remove());
     document.querySelectorAll('td').forEach(cell => {
       const text = cell.textContent.trim();
