@@ -4,11 +4,12 @@ import json
 from functools import lru_cache
 from typing import Annotated, Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 PRODUCTION_LIKE_ENVIRONMENTS = {"prod", "production", "stage", "staging"}
+LOCAL_ENVIRONMENTS = {"development", "dev", "local", "test", "testing"}
 
 
 class Settings(BaseSettings):
@@ -27,6 +28,13 @@ class Settings(BaseSettings):
         default_factory=lambda: DEFAULT_ALLOWED_HOSTS.copy()
     )
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="after")
+    def enable_demo_actions_for_local_development(self):
+        """Keep demo actions usable locally while requiring explicit opt-in in production-like modes."""
+        if self.environment.strip().lower() in LOCAL_ENVIRONMENTS:
+            self.demo_mode = True
+        return self
 
     @field_validator("allowed_hosts", mode="before")
     @classmethod
