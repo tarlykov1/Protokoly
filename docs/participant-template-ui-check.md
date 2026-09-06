@@ -1,0 +1,1 @@
+Verification: open `/employee-lists`, create a template, edit its composition, save it, then delete it. The page-specific JavaScript is intentionally loaded from the base `scripts` block after Bootstrap.
