@@ -8,6 +8,7 @@ see and correct the exact fields in context.
 
 from __future__ import annotations
 
+import inspect
 from copy import deepcopy
 from datetime import date
 
@@ -17,26 +18,49 @@ _original_confirm_session = _service.confirm_session
 _SENTINEL_ASSIGNEE = "__IMPORT_ASSIGNEE_NOT_RECOGNISED__"
 
 
-def _valid_date_or_none(value):
-    if not value or isinstance(value, date):
-        return value
+def _json_safe_date_or_none(value):
+    """Validate an ISO date without putting ``date`` objects into JSON payloads."""
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
     try:
-        return date.fromisoformat(str(value))
+        date.fromisoformat(text)
     except (TypeError, ValueError):
         return None
+    return text
+
+
+def _called_from_http_confirm_route() -> bool:
+    """Limit the relaxed behavior to the user-facing confirmation endpoint.
+
+    The lower-level service remains strict for callers that intentionally use
+    it as a validation gate. The HTTP workflow is review-first because that is
+    where users need to reach the editor to correct an imperfect document.
+    """
+    frame = inspect.currentframe()
+    caller = frame.f_back.f_back if frame and frame.f_back else None
+    return bool(caller and caller.f_globals.get("__name__") == "app.main")
 
 
 def _confirm_session_for_review(db, session):
-    """Confirm a partially recognised DOCX and defer field fixes to the editor.
-
-    The legacy confirmation routine used parser diagnostics as a hard gate.
-    That made the preview useful but then prevented the user from reaching the
-    editor to fix exactly those diagnostics. Here we keep the original routine
-    for persistence, but feed it a safe review copy of the payload. The real
-    parser diagnostics remain stored on the import session.
-    """
+    """Confirm a partially recognised DOCX and defer field fixes to the editor."""
     payload = session.parsed_payload or {}
     if not payload.get("tasks"):
+        return _original_confirm_session(db, session)
+
+    errors = list(session.errors_payload or payload.get("errors") or [])
+    has_missing_assignee = any(
+        not str(task.get("assignee_raw") or "").strip() for task in payload.get("tasks", [])
+    )
+
+    # Keep the established strict service contract for direct/internal callers.
+    # Only the UI confirmation route relaxes parser diagnostics so the user can
+    # actually open the editor and fix them there.
+    if (errors or has_missing_assignee) and not _called_from_http_confirm_route():
+        return _original_confirm_session(db, session)
+    if not errors and not has_missing_assignee:
         return _original_confirm_session(db, session)
 
     original_payload = deepcopy(payload)
@@ -44,11 +68,15 @@ def _confirm_session_for_review(db, session):
     review_payload = deepcopy(payload)
     review_payload["errors"] = []
 
-    review_payload["meeting_date"] = _valid_date_or_none(review_payload.get("meeting_date"))
-    review_payload["document_date"] = _valid_date_or_none(review_payload.get("document_date"))
+    review_payload["meeting_date"] = _json_safe_date_or_none(
+        review_payload.get("meeting_date")
+    )
+    review_payload["document_date"] = _json_safe_date_or_none(
+        review_payload.get("document_date")
+    )
 
     for task in review_payload.get("tasks", []):
-        task["deadline"] = _valid_date_or_none(task.get("deadline"))
+        task["deadline"] = _json_safe_date_or_none(task.get("deadline"))
         if not str(task.get("assignee_raw") or "").strip():
             # The persistence function historically requires a raw assignee.
             # Use a temporary marker and remove the resulting placeholder row
