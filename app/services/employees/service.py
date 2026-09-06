@@ -1,5 +1,5 @@
-from datetime import UTC, datetime
 import re
+from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ def _normalize_name(value: str) -> str:
 
 
 def _derived_aliases(full_name: str) -> set[str]:
-    """Build safe, deterministic aliases for common Russian FIO notation."""
+    """Build safe deterministic aliases for common Russian FIO notation."""
     parts = [part for part in re.split(r"\s+", full_name.strip()) if part]
     if len(parts) < 2:
         return set()
@@ -21,10 +21,7 @@ def _derived_aliases(full_name: str) -> set[str]:
     middle = parts[2] if len(parts) > 2 else ""
     initials = f"{first[0]}." + (f"{middle[0]}." if middle else "")
     spaced_initials = f"{first[0]}." + (f" {middle[0]}." if middle else "")
-    return {
-        f"{surname} {initials}",
-        f"{surname} {spaced_initials}",
-    }
+    return {f"{surname} {initials}", f"{surname} {spaced_initials}"}
 
 
 class EmployeeDirectoryService:
