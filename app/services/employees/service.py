@@ -1,19 +1,61 @@
 from datetime import UTC, datetime
+import re
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models.domain import Employee, EmployeeSourceSettings
+from app.db.models.domain import Employee, EmployeeAlias, EmployeeSourceSettings
 from app.services.employees.provider import EmployeeProvider
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"\s+", " ", value.lower().replace("ё", "е")).strip()
+
+
+def _derived_aliases(full_name: str) -> set[str]:
+    """Build safe, deterministic aliases for common Russian FIO notation."""
+    parts = [part for part in re.split(r"\s+", full_name.strip()) if part]
+    if len(parts) < 2:
+        return set()
+    surname, first = parts[0], parts[1]
+    middle = parts[2] if len(parts) > 2 else ""
+    initials = f"{first[0]}." + (f"{middle[0]}." if middle else "")
+    spaced_initials = f"{first[0]}." + (f" {middle[0]}." if middle else "")
+    return {
+        f"{surname} {initials}",
+        f"{surname} {spaced_initials}",
+    }
 
 
 class EmployeeDirectoryService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _sync_aliases(self, employee: Employee) -> None:
+        existing = {
+            _normalize_name(alias.alias)
+            for alias in self.db.scalars(
+                select(EmployeeAlias).where(EmployeeAlias.employee_id == employee.id)
+            ).all()
+        }
+        for alias in _derived_aliases(employee.full_name):
+            normalized = _normalize_name(alias)
+            if normalized not in existing:
+                self.db.add(
+                    EmployeeAlias(
+                        employee_id=employee.id,
+                        alias=alias,
+                        normalized_alias=normalized,
+                        source="derived_fio",
+                    )
+                )
+                existing.add(normalized)
+
     def create(self, **data) -> Employee:
         employee = Employee(**data)
         self.db.add(employee)
+        self.db.flush()
+        self._sync_aliases(employee)
         self.db.commit()
         self.db.refresh(employee)
         return employee
@@ -21,6 +63,8 @@ class EmployeeDirectoryService:
     def update(self, employee: Employee, **data) -> Employee:
         for field, value in data.items():
             setattr(employee, field, value)
+        self.db.flush()
+        self._sync_aliases(employee)
         self.db.commit()
         self.db.refresh(employee)
         return employee
@@ -73,7 +117,10 @@ class EmployeeDirectoryService:
                 for key, value in values.items():
                     setattr(employee, key, value)
             else:
-                self.db.add(Employee(**values))
+                employee = Employee(**values)
+                self.db.add(employee)
+            self.db.flush()
+            self._sync_aliases(employee)
             count += 1
         if settings:
             settings.last_sync_at = datetime.now(UTC)
