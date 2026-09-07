@@ -13,10 +13,13 @@ def test_protocol_card_separates_service_tabs_from_document_paper():
     assert 'class="protocol-document"' in template
     assert "protocol-paper" in template
 
+    readiness_pos = template.index("protocol-readiness-summary")
+    tabs_pos = template.index("protocol-tabs")
     paper_pos = template.index('<section class="protocol-document">')
     attendees_pos = template.index("Присутствовали:", paper_pos)
     decisions_pos = template.index("РЕШИЛИ:", attendees_pos)
-    assert paper_pos < attendees_pos < decisions_pos
+    assert readiness_pos < tabs_pos < paper_pos < attendees_pos < decisions_pos
+    assert template.count("ui.readiness(progress,'Готовность протокола')") == 1
 
 
 def test_protocol_card_localizes_meeting_format_and_hides_validation_codes():
@@ -33,3 +36,11 @@ def test_history_event_labels_cover_protocol_editor_changes():
 
     assert '"protocol_details_changed": "Изменение реквизитов протокола"' in governance
     assert '"protocol_signatories_changed": "Изменение подписной части"' in governance
+
+
+def test_editor_field_labels_have_explicit_high_contrast_style():
+    css = Path("app/web/static/css/gov-ui.css").read_text(encoding="utf-8")
+
+    assert ".form-label{display:block;color:#243b53!important" in css
+    assert ".task-meta label>span,.parent-task-field label>span,.task-search label,.assignee-chips small" in css
+    assert "font-weight:650" in css

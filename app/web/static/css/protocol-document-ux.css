@@ -1,0 +1,7 @@
+[data-inline-field]{cursor:text;border-radius:4px;transition:background-color .15s ease,outline-color .15s ease}
+[data-inline-field]:hover{background:#f5f8fc;outline:1px dashed #a8b7c8;outline-offset:3px}
+[data-inline-field].inline-editing{background:#fff;outline:2px solid #0d4cd3;outline-offset:4px;min-height:1.4em}
+[data-inline-field].inline-saving{background:#fff8e6}
+[data-inline-field].inline-saved{background:#e8f6ed}
+[data-inline-field].inline-save-error{background:#fff0f0;outline:2px solid #d62f2f;outline-offset:3px}
+.protocol-readiness-summary .readiness{max-width:none}
