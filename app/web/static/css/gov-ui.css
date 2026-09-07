@@ -38,6 +38,12 @@ h1{font-size:28px;font-weight:650;line-height:1.25}h2{font-weight:650}
 .btn-light,.btn-secondary{background:#fff;border:1px solid #c7d0dc;color:#273b50}.btn-light:hover,.btn-secondary:hover{background:#f4f6f8;border-color:#aeb9c8;color:#0b1f33}
 .btn-outline-primary{border-color:#8aabef;color:var(--primary)}.btn-outline-primary:hover{background:#edf3ff;color:var(--primary-dark);border-color:#5d8ce7}
 .form-control,.form-select{border-radius:7px;border-color:#bfc9d6;min-height:40px}.form-control:focus,.form-select:focus{border-color:var(--primary);outline:2px solid rgba(13,76,211,.14);outline-offset:0}
+.form-label{display:block;color:#243b53!important;font-size:14px;font-weight:650;line-height:1.25;margin-bottom:.42rem}
+.accordion-body label>.form-label{color:#1d344d!important}
+.task-meta label>span,.parent-task-field label>span,.task-search label,.assignee-chips small{color:#334e68!important;font-size:13px;font-weight:650;line-height:1.25}
+.assignee-chips small{display:block;margin-bottom:.35rem}
+.form-control::placeholder{color:#7b8da1;opacity:1}
+.accordion-button{color:#16324f;font-weight:650}
 .alert{border-radius:8px;border-width:1px;box-shadow:none}.alert-info{background:#eef5ff;border-color:#b8cff7;color:#153967}.alert-danger{background:#fff1f1;border-color:#efb9b9;color:#7c1c1c}
 .status-badge,.workflow-badge,.chip,.member-chip{border-radius:6px!important;font-weight:600}
 .status-draft{background:#eef3ff;color:#244f9e}.status-review,.status-imported{background:#fff4d6;color:#80520a}.status-ready,.status-published{background:#e5f6eb;color:#176a31}.status-error{background:#feeaea;color:#962828}.status-partial{background:#f0ecff;color:#5b44a5}
