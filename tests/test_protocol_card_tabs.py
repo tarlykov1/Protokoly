@@ -13,10 +13,13 @@ def test_protocol_card_separates_service_tabs_from_document_paper():
     assert 'class="protocol-document"' in template
     assert "protocol-paper" in template
 
+    readiness_pos = template.index("protocol-readiness-summary")
+    tabs_pos = template.index("protocol-tabs")
     paper_pos = template.index('<section class="protocol-document">')
     attendees_pos = template.index("Присутствовали:", paper_pos)
     decisions_pos = template.index("РЕШИЛИ:", attendees_pos)
-    assert paper_pos < attendees_pos < decisions_pos
+    assert readiness_pos < tabs_pos < paper_pos < attendees_pos < decisions_pos
+    assert template.count("ui.readiness(progress,'Готовность протокола')") == 1
 
 
 def test_protocol_card_localizes_meeting_format_and_hides_validation_codes():
