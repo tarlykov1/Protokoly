@@ -10,9 +10,10 @@ def test_protocol_card_separates_service_tabs_from_document_paper():
     assert "?view=versions" in template
     assert "История изменений" in template
     assert "Версии DOCX" in template
+    assert 'class="protocol-document"' in template
     assert "protocol-paper" in template
 
-    paper_pos = template.index('<section class="protocol-document protocol-paper')
+    paper_pos = template.index('<section class="protocol-document">')
     attendees_pos = template.index("Присутствовали:", paper_pos)
     decisions_pos = template.index("РЕШИЛИ:", attendees_pos)
     assert paper_pos < attendees_pos < decisions_pos
