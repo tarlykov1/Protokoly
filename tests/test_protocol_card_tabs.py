@@ -36,3 +36,11 @@ def test_history_event_labels_cover_protocol_editor_changes():
 
     assert '"protocol_details_changed": "Изменение реквизитов протокола"' in governance
     assert '"protocol_signatories_changed": "Изменение подписной части"' in governance
+
+
+def test_editor_field_labels_have_explicit_high_contrast_style():
+    css = Path("app/web/static/css/gov-ui.css").read_text(encoding="utf-8")
+
+    assert ".form-label{display:block;color:#243b53!important" in css
+    assert ".task-meta label>span,.parent-task-field label>span,.task-search label,.assignee-chips small" in css
+    assert "font-weight:650" in css
