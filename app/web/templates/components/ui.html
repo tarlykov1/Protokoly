@@ -8,21 +8,13 @@
 <span class="status-badge status-{{ cls.get(status,'draft') }}"><span aria-hidden="true">●</span>{{ human_label(status) }}</span>
 {%- endmacro %}
 {% macro action_bar(title, status=None, back='/protocols', primary='', secondary='') -%}
-<header class="app-action-bar" data-testid="action-bar">
-  <a class="btn btn-ghost" href="{{ back }}">← Назад</a>
-  <div class="action-bar-title"><h1>{{ title }}</h1>{% if status %}{{ status_badge(status) }}{% endif %}</div>
-  <div class="action-bar-actions">{{ secondary|safe }}{{ primary|safe }}<div class="dropdown"><button class="btn btn-ghost dropdown-toggle" data-bs-toggle="dropdown">Еще</button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item" href="{{ back }}">Закрыть</a></li></ul></div></div>
-</header>
+<header class="app-action-bar" data-testid="action-bar"><a class="btn btn-ghost" href="{{ back }}">← Назад</a><div class="action-bar-title"><h1>{{ title }}</h1>{% if status %}{{ status_badge(status) }}{% endif %}</div><div class="action-bar-actions">{{ secondary|safe }}{{ primary|safe }}<div class="dropdown"><button class="btn btn-ghost dropdown-toggle" data-bs-toggle="dropdown">Еще</button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item" href="{{ back }}">Закрыть</a></li></ul></div></div></header>
 {%- endmacro %}
 {% macro readiness(percent, label='Готовность') -%}
 <div class="readiness" aria-label="{{ label }} {{ percent }}%"><div class="d-flex justify-content-between small mb-1"><span>{{ label }}</span><strong>{{ percent }}%</strong></div><div class="readiness-track"><div class="readiness-fill" style="width:{{ percent }}%"></div></div></div>
 {%- endmacro %}
-{% macro metric_card(icon,value,label,hint,href) -%}
-<a class="card-app metric-card" href="{{ href }}"><span class="metric-icon" aria-hidden="true">{{ icon }}</span><span class="metric-value">{{ value }}</span><strong>{{ label }}</strong><span class="small muted">{{ hint }}</span></a>
-{%- endmacro %}
-{% macro empty_state(title, text, action_href=None, action_label=None) -%}
-<div class="empty"><h2 class="h5">{{ title }}</h2><p>{{ text }}</p>{% if action_href %}<a class="btn btn-primary" href="{{ action_href }}">{{ action_label }}</a>{% endif %}</div>
-{%- endmacro %}
+{% macro metric_card(icon,value,label,hint,href) -%}<a class="card-app metric-card" href="{{ href }}"><span class="metric-icon" aria-hidden="true">{{ icon }}</span><span class="metric-value">{{ value }}</span><strong>{{ label }}</strong><span class="small muted">{{ hint }}</span></a>{%- endmacro %}
+{% macro empty_state(title, text, action_href=None, action_label=None) -%}<div class="empty"><h2 class="h5">{{ title }}</h2><p>{{ text }}</p>{% if action_href %}<a class="btn btn-primary" href="{{ action_href }}">{{ action_label }}</a>{% endif %}</div>{%- endmacro %}
 {% macro task_card(t, errors=[], warnings=[], assessment=None, section=None) -%}
-<div class="document-task" data-task-id="{{ t.id }}"><div class="document-task-number">{{ t.number }}.</div><div class="document-task-body"><div class="document-task-title" data-inline-field="title">{{ t.title }}</div>{% if t.description %}<div class="document-task-description" data-inline-field="description">{{ t.description }}</div>{% endif %}<dl class="document-task-meta"><div><dt>Исполнители:</dt><dd>{{ t.assignments|map(attribute='assignee_name')|select|join(', ') or '—' }}</dd></div><div><dt>Срок:</dt><dd>{{ t.deadline or '—' }}</dd></div>{% if t.is_controlled or t.status not in ('new','draft') %}<div><dt>Контроль / статус:</dt><dd>{{ 'На контроле' if t.is_controlled else human_label(t.status) }}</dd></div>{% endif %}</dl>{% if errors or warnings %}<div class="document-task-notes">{% for e in errors %}<span class="status-badge status-error">{{ e }}</span>{% endfor %}{% for w in warnings %}<span class="status-badge status-review">{{ w }}</span>{% endfor %}</div>{% endif %}</div></div>
+<div class="document-task" data-task-id="{{ t.id }}"><div class="document-task-number">{{ t.number }}.</div><div class="document-task-body"><div class="document-task-title" data-inline-field="title" data-edit-kind="text">{{ t.title }}</div><div class="document-task-description" data-inline-field="description" data-edit-kind="textarea">{{ t.description or '—' }}</div><dl class="document-task-meta"><div><dt>Исполнители:</dt><dd>{{ t.assignments|map(attribute='assignee_name')|select|join(', ') or '—' }}</dd></div><div><dt>Срок:</dt><dd class="document-task-deadline" data-inline-field="deadline" data-edit-kind="date">{{ t.deadline or '—' }}</dd></div>{% if t.is_controlled or t.status not in ('new','draft') %}<div><dt>Контроль / статус:</dt><dd>{{ 'На контроле' if t.is_controlled else human_label(t.status) }}</dd></div>{% endif %}</dl>{% if errors or warnings %}<div class="document-task-notes">{% for e in errors %}<span class="status-badge status-error">{{ e }}</span>{% endfor %}{% for w in warnings %}<span class="status-badge status-review">{{ w }}</span>{% endfor %}</div>{% endif %}</div></div>
 {%- endmacro %}
