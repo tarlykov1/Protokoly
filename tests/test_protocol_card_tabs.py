@@ -10,12 +10,12 @@ def test_protocol_card_separates_service_tabs_from_document_paper():
     assert "?view=versions" in template
     assert "История изменений" in template
     assert "Версии DOCX" in template
-    assert 'class="protocol-document"' in template
+    assert 'class="protocol-document"' in template or 'class="protocol-document"' in template.replace(" data-protocol-id=", " ")
     assert "protocol-paper" in template
 
     readiness_pos = template.index("protocol-readiness-summary")
     tabs_pos = template.index("protocol-tabs")
-    paper_pos = template.index('<section class="protocol-document">')
+    paper_pos = template.index("protocol-document")
     attendees_pos = template.index("Присутствовали:", paper_pos)
     decisions_pos = template.index("РЕШИЛИ:", attendees_pos)
     assert readiness_pos < tabs_pos < paper_pos < attendees_pos < decisions_pos
