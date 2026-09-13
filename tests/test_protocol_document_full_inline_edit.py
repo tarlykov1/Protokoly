@@ -55,5 +55,5 @@ def test_document_inline_edit_uses_existing_editor_save_endpoint():
     assert "`/protocols/${protocolId}/editor/save`" in script
     assert "{protocol: {[element.dataset.protocolField]: value}}" in script
     assert "{tasks: [{id: Number(task.dataset.taskId), [element.dataset.inlineField]: value}]}" in script
-    assert "await requestSave({signatories})" in script
+    assert "await requestSave({signatory_updates:" in script
     assert "event.key === 'Escape'" in script

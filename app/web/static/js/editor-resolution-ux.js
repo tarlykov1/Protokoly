@@ -104,7 +104,7 @@
       item.className = 'list-group-item list-group-item-action text-start';
       item.dataset.employeeId = option.value;
       item.dataset.search = option.textContent.toLowerCase();
-      item.innerHTML = `<strong>${option.textContent}</strong>`;
+      const name = document.createElement('strong'); name.textContent = option.textContent; item.replaceChildren(name);
       item.addEventListener('click', async () => {
         try {
           item.disabled = true;

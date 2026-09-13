@@ -48,27 +48,34 @@ class DatabaseEmployeeProvider(EmployeeProvider):
 
     def load(self) -> Iterable[EmployeeRecord]:
         engine = create_engine(self.connection_url)
-        table = Table(
-            self.parameters["table"],
-            MetaData(),
-            schema=self.parameters.get("schema") or None,
-            autoload_with=engine,
-        )
-        fields = {key: self.parameters.get(key) for key in ("id_field", "name_field", "email_field")}
-        required = (fields["id_field"], fields["name_field"])
-        if not all(required) or any(value not in table.c for value in required):
-            raise ValueError("Не найдены настроенные поля ID или ФИО")
-        columns = [table.c[value] for value in fields.values() if value and value in table.c]
-        with engine.connect() as connection:
-            rows = connection.execute(select(*columns)).mappings().all()
-        return [
-            EmployeeRecord(
-                external_id=str(row[fields["id_field"]]),
-                full_name=str(row[fields["name_field"]]),
-                email=str(row[fields["email_field"]]) if fields["email_field"] and row[fields["email_field"]] else None,
+        try:
+            table = Table(
+                self.parameters["table"],
+                MetaData(),
+                schema=self.parameters.get("schema") or None,
+                autoload_with=engine,
             )
-            for row in rows
-        ]
+            fields = {
+                key: self.parameters.get(key) for key in ("id_field", "name_field", "email_field")
+            }
+            required = (fields["id_field"], fields["name_field"])
+            if not all(required) or any(value not in table.c for value in required):
+                raise ValueError("Не найдены настроенные поля ID или ФИО")
+            columns = [table.c[value] for value in fields.values() if value and value in table.c]
+            with engine.connect() as connection:
+                rows = connection.execute(select(*columns)).mappings().all()
+            return [
+                EmployeeRecord(
+                    external_id=str(row[fields["id_field"]]),
+                    full_name=str(row[fields["name_field"]]),
+                    email=str(row[fields["email_field"]])
+                    if fields["email_field"] and row[fields["email_field"]]
+                    else None,
+                )
+                for row in rows
+            ]
+        finally:
+            engine.dispose()
 
 
 class BitrixEmployeeProvider(EmployeeProvider):
@@ -81,7 +88,9 @@ class BitrixEmployeeProvider(EmployeeProvider):
         return [
             EmployeeRecord(
                 external_id=str(user.get("ID") or user.get("id")),
-                full_name=" ".join(filter(None, (user.get("LAST_NAME"), user.get("NAME"), user.get("SECOND_NAME")))).strip(),
+                full_name=" ".join(
+                    filter(None, (user.get("LAST_NAME"), user.get("NAME"), user.get("SECOND_NAME")))
+                ).strip(),
                 email=user.get("EMAIL"),
                 position=user.get("WORK_POSITION"),
                 department=str(user.get("UF_DEPARTMENT", "")) or None,

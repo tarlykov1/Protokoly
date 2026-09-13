@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,7 +23,14 @@ from app.db.models.domain import (
     SavedReportView,
 )
 from app.db.session import get_db
-from app.services.auth import CurrentUser, Permission, current_user, require, require_admin
+from app.services.auth import (
+    CurrentUser,
+    Permission,
+    authorize_request,
+    current_user,
+    require,
+    require_admin,
+)
 from app.services.export import ProtocolDocxExporter
 from app.services.imports.service import (
     confirm_session,
@@ -62,7 +69,10 @@ from app.services.reporting.query import parse_report_query
 from app.services.reporting.service import ReportService
 from app.services.validation import ProtocolValidationService
 
-app = FastAPI(title="Protocol Management System")
+app = FastAPI(title="Protocol Management System", dependencies=[Depends(authorize_request)])
+from app.web.routes.editor import router as editor_router
+
+app.include_router(editor_router)
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 templates = Jinja2Templates(directory="app/web/templates")
 logger = logging.getLogger("protokoly.http")
@@ -107,7 +117,7 @@ async def controlled_http_error(request: Request, exc: StarletteHTTPException):
         "detail": str(exc.detail),
         "request_id": getattr(request.state, "request_id", str(uuid4())),
     }
-    if "application/json" in request.headers.get("accept", "") or request.url.path.startswith(
+    if "application/json" in (request.headers.get("accept", "") + request.headers.get("content-type", "")) or request.url.path.startswith(
         ("/ready", "/system/diagnostics")
     ):
         return JSONResponse(payload, status_code=exc.status_code)
@@ -801,7 +811,6 @@ from app.db.models.domain import (
     ProtocolParticipantGroup,
     ProtocolParticipantGroupMember,
     ProtocolSection,
-    ProtocolSignatory,
     ProtocolTaskAssignment,
     ProtocolTaskLink,
     PublicationRun,
@@ -1029,16 +1038,31 @@ def export_protocol_docx(
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
-    try:
-        content = ProtocolDocxExporter(db).export(protocol_id, mode=mode)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    # A link containing version reads an existing registry entry; a normal export creates one.
-    if version is None:
-        register_document(db, protocol, current_user(request).username)
+    if version is not None:
+        from app.db.models.domain import ProtocolDocumentVersion
+
+        snapshot = db.scalar(select(ProtocolDocumentVersion).where(
+            ProtocolDocumentVersion.protocol_id == protocol_id,
+            ProtocolDocumentVersion.version == version,
+        ))
+        if snapshot is None:
+            raise HTTPException(404, "Версия документа не найдена")
+        if snapshot.content is None:
+            raise HTTPException(410, "Содержимое старой версии не было сохранено. Выгрузите текущую версию отдельно.")
+        content = snapshot.content
+    else:
+        try:
+            content = ProtocolDocxExporter(db).export(protocol_id, mode=mode)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        register_document(db, protocol, current_user(request).username, content=content)
         db.commit()
+    # ASCII fallback avoids header encoding failures for Cyrillic protocol numbers.
+    from urllib.parse import quote
+
     number = (protocol.number or str(protocol.id)).replace("/", "_").replace("\\", "_")
-    headers = {"Content-Disposition": f'attachment; filename="protocol_{number}.docx"'}
+    filename = quote(f"protocol_{number}.docx", safe="")
+    headers = {"Content-Disposition": f"attachment; filename=protocol_{protocol.id}.docx; filename*=UTF-8''{filename}"}
     return StreamingResponse(
         iter([content]),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1230,130 +1254,6 @@ def protocol_editor(
             error_count=sum(bool(editor_errors(task)) for task in protocol.tasks),
         ),
     )
-
-
-@app.post("/protocols/{protocol_id}/editor/save")
-def save_protocol_editor(
-    protocol_id: int,
-    payload: dict = Body(...),
-    actor: CurrentUser = Depends(require(Permission.EDIT)),
-    db: Session = Depends(get_db),
-):
-    protocol = db.get(Protocol, protocol_id)
-    if not protocol:
-        raise HTTPException(status_code=404, detail="Протокол не найден")
-    expected_version = payload.get("version")
-    if expected_version is not None and int(expected_version) != protocol.version:
-        raise HTTPException(status_code=409, detail="Протокол был изменён другим пользователем.")
-    protocol_data = payload.get("protocol", {})
-    tracked_before = {}
-    text_fields = (
-        "document_type",
-        "title",
-        "number",
-        "meeting_location",
-        "meeting_format",
-        "organization_name",
-        "event_type",
-        "event_title",
-        "meeting_topic",
-        "agenda_basis",
-        "chairperson_snapshot",
-        "secretary_snapshot",
-        "initiator",
-        "responsible",
-        "participants",
-        "responsible_department",
-        "project_label",
-        "description",
-        "footer_notes",
-        "prepared_by",
-        "approved_by",
-    )
-    for field in text_fields:
-        if field in protocol_data:
-            tracked_before[field] = getattr(protocol, field)
-            cleaned = str(protocol_data[field]).strip()
-            setattr(protocol, field, cleaned or ("" if field == "title" else None))
-    if "meeting_date" in protocol_data:
-        value = protocol_data["meeting_date"]
-        tracked_before["meeting_date"] = protocol.meeting_date
-        protocol.meeting_date = date.fromisoformat(value) if value else None
-    if "meeting_time" in protocol_data:
-        tracked_before["meeting_time"] = protocol.meeting_time
-        value = protocol_data["meeting_time"]
-        protocol.meeting_time = time.fromisoformat(value) if value else None
-    for field in ("chairperson_employee_id", "secretary_employee_id"):
-        if field in protocol_data:
-            tracked_before[field] = getattr(protocol, field)
-            value = protocol_data[field]
-            setattr(protocol, field, int(value) if value else None)
-    old_signatories = [
-        (s.role, s.employee_id, s.name_snapshot, s.position_snapshot) for s in protocol.signatories
-    ]
-    if "signatories" in payload:
-        protocol.signatories.clear()
-        for order, item in enumerate(payload.get("signatories") or []):
-            name = str(item.get("name_snapshot") or "").strip()
-            role = str(item.get("role") or "").strip()
-            if name and role:
-                protocol.signatories.append(
-                    ProtocolSignatory(
-                        role=role,
-                        employee_id=int(item["employee_id"]) if item.get("employee_id") else None,
-                        name_snapshot=name,
-                        position_snapshot=str(item.get("position_snapshot") or "").strip() or None,
-                        sort_order=order,
-                    )
-                )
-    changed = [field for field, old in tracked_before.items() if getattr(protocol, field) != old]
-    if changed:
-        record_event(db, protocol, "protocol_details_changed", actor.username, fields=changed)
-    new_signatories = [
-        (s.role, s.employee_id, s.name_snapshot, s.position_snapshot) for s in protocol.signatories
-    ]
-    if new_signatories != old_signatories:
-        record_event(db, protocol, "protocol_signatories_changed", actor.username)
-    tasks = {task.id: task for task in protocol.tasks}
-    sections = {
-        section.id: section
-        for section in db.scalars(
-            select(ProtocolSection).where(ProtocolSection.protocol_id == protocol_id)
-        ).all()
-    }
-    for section_data in payload.get("sections", []):
-        section = sections.get(int(section_data["id"]))
-        if section:
-            section.title = section_data["title"].strip() or section.title
-            if "sort_order" in section_data:
-                section.sort_order = int(section_data["sort_order"])
-    for task_data in payload.get("tasks", []):
-        task = tasks.get(int(task_data["id"]))
-        if task:
-            old_title, old_deadline = task.title, task.deadline
-            old_assignees = sorted(a.employee_id for a in task.assignments if a.employee_id)
-            try:
-                apply_task_data(db, task, task_data)
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-            if "position" in task_data:
-                task.position = int(task_data["position"])
-            if task.title != old_title:
-                record_event(db, protocol, "task_text_changed", actor.username, task_id=task.id)
-            if task.deadline != old_deadline:
-                record_event(db, protocol, "task_deadline_changed", actor.username, task_id=task.id)
-            new_assignees = sorted(a.employee_id for a in task.assignments if a.employee_id)
-            if new_assignees != old_assignees:
-                record_event(
-                    db, protocol, "task_assignees_changed", actor.username, task_id=task.id
-                )
-    protocol.version += 1
-    for task_data in payload.get("tasks", []):
-        task = tasks.get(int(task_data["id"]))
-        if task:
-            task.version += 1
-    db.commit()
-    return {"saved": True}
 
 
 @app.post("/protocols/{protocol_id}/participant-groups")

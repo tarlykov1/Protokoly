@@ -3,9 +3,8 @@ name: CI
 on:
   push:
     branches:
+      - main
       - work
-      - feature/protocol-editor
-      - feature/demo-mvp
   pull_request:
   workflow_dispatch:
 
@@ -49,6 +48,17 @@ jobs:
             sleep 1
           done
           exit 1
+
+      - name: Set up Node for editor tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Test editor behavior
+        run: |
+          npm ci --ignore-scripts
+          npm test
 
       - name: Run Ruff
         run: ruff check .

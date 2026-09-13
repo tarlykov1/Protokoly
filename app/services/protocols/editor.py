@@ -7,6 +7,7 @@ from app.db.models.domain import (
     Employee,
     EmployeeAlias,
     Protocol,
+    ProtocolSection,
     ProtocolTask,
     ProtocolTaskAssignment,
 )
@@ -25,7 +26,11 @@ def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask
     if "deadline" in data:
         task.deadline = date.fromisoformat(data["deadline"]) if data["deadline"] else None
     if "section_id" in data:
-        task.section_id = int(data["section_id"]) if data["section_id"] else None
+        section_id = int(data["section_id"]) if data["section_id"] else None
+        section = db.get(ProtocolSection, section_id) if section_id else None
+        if section_id and (not section or section.protocol_id != task.protocol_id):
+            raise ValueError("Раздел не принадлежит протоколу")
+        task.section_id = section_id
     if "task_mode" in data:
         task.create_as_subtasks = data["task_mode"] == "subtasks"
     if "create_as_subtasks" in data:
@@ -39,8 +44,20 @@ def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask
             not parent or parent.protocol_id != task.protocol_id or parent.id == task.id
         ):
             raise ValueError("Родительское поручение не найдено")
+        visited = {task.id}
+        while parent:
+            if parent.id in visited:
+                raise ValueError("Циклическая связь поручений недопустима")
+            visited.add(parent.id)
+            parent = db.get(ProtocolTask, parent.parent_task_id) if parent.parent_task_id else None
         task.parent_task_id = parent_id if task.create_as_subtasks else None
+    if not task.create_as_subtasks:
+        task.parent_task_id = None
     if "employee_ids" in data:
+        employee_ids = {int(value) for value in data["employee_ids"] or []}
+        found = set(db.scalars(select(Employee.id).where(Employee.id.in_(employee_ids))))
+        if employee_ids != found:
+            raise ValueError("Сотрудник не найден")
         for assignment in list(task.assignments):
             db.delete(assignment)
         task.assignments.clear()

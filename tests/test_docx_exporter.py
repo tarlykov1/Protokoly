@@ -115,7 +115,7 @@ def test_docx_export_endpoint_returns_attachment_file():
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument")
-        assert 'filename="protocol_M-026_26.docx"' in response.headers["content-disposition"]
+        assert "filename*=UTF-8''protocol_M-026_26.docx" in response.headers["content-disposition"]
         assert "Первое поручение" in document_text(response.content)
     finally:
         teardown_export_protocol()

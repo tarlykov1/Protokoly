@@ -3,11 +3,12 @@
   const rows = () => [...document.querySelectorAll('.task-row')];
   const request = async (path, options = {}) => {
     const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
-    if (!response.ok) throw new Error('Не удалось выполнить действие');
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail || 'Не удалось выполнить действие'); }
     return response.json();
   };
   const value = (row, selector) => row.querySelector(selector).value;
   const serialize = () => ({
+    version: window.protocolEditor.version,
     protocol: {
       document_type: document.querySelector('#protocol-document-type').value,
       title: document.querySelector('#protocol-title').value,
@@ -22,7 +23,7 @@
       footer_notes: document.querySelector('#protocol-footer-notes').value,
       description: document.querySelector('#protocol-description').value
     },
-    signatories: [...document.querySelectorAll('.signatory-row')].map((row, sort_order) => ({role:row.querySelector('.signatory-role').value,position_snapshot:row.querySelector('.signatory-position').value,name_snapshot:row.querySelector('.signatory-name').value,sort_order})),
+    signatories: [...document.querySelectorAll('.signatory-row')].map((row, sort_order) => ({id:row.dataset.signatoryId || undefined,role:row.querySelector('.signatory-role').value,position_snapshot:row.querySelector('.signatory-position').value,name_snapshot:row.querySelector('.signatory-name').value,sort_order})),
     sections: [...document.querySelectorAll('.protocol-section[data-section-id]')].map((section, sort_order) => ({id:section.dataset.sectionId,title:section.querySelector('.section-title').value,sort_order})),
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
@@ -35,15 +36,39 @@
   const message = (text, error = false) => { const box = document.querySelector('#editor-message'); box.textContent = text; box.className = `alert ${error ? 'alert-danger' : 'alert-success'}`; };
   const status = document.querySelector('#save-status');
   let saveTimer; let savePromise = Promise.resolve();
+  let revision = 0, savedRevision = 0, pendingSaves = 0, saveFailed = false;
   const save = () => {
-    clearTimeout(saveTimer); status.textContent = 'Сохранение…'; status.className = 'save-status is-saving';
-    savePromise = request(`/protocols/${id}/editor/save`, {method:'POST', body:JSON.stringify(serialize())})
-      .then(() => { rows().forEach(row => row.classList.remove('is-dirty')); status.textContent = 'Все изменения сохранены'; status.className = 'save-status is-saved'; })
-      .catch(e => { status.textContent = 'Не удалось сохранить'; status.className = 'save-status is-error'; message(e.message, true); throw e; });
+    clearTimeout(saveTimer);
+    pendingSaves += 1;
+    savePromise = savePromise.catch(() => {}).then(async () => {
+      if (saveFailed) throw new Error('Сохранение остановлено. Скопируйте изменения и обновите страницу.');
+      const savingRevision = revision;
+      const signatoryRows = [...document.querySelectorAll('.signatory-row')];
+      status.textContent = 'Сохранение…'; status.className = 'save-status is-saving';
+      const result = await request(`/protocols/${id}/editor/save`, {method:'POST', body:JSON.stringify(serialize())});
+      window.protocolEditor.version = result.version;
+      (result.signatories || []).forEach(item => {
+        if (signatoryRows[item.sort_order]) signatoryRows[item.sort_order].dataset.signatoryId = item.id;
+      });
+      savedRevision = savingRevision;
+      if (revision === savedRevision) {
+        rows().forEach(row => row.classList.remove('is-dirty'));
+        status.textContent = 'Все изменения сохранены'; status.className = 'save-status is-saved';
+      } else {
+        status.textContent = 'Есть несохранённые изменения'; status.className = 'save-status is-dirty';
+      }
+    }).catch(e => {
+      saveFailed = true;
+      status.textContent = 'Не удалось сохранить'; status.className = 'save-status is-error';
+      message(e.message, true); throw e;
+    }).finally(() => { pendingSaves -= 1; });
     return savePromise;
   };
-  const scheduleSave = () => { clearTimeout(saveTimer); status.textContent = 'Есть несохранённые изменения'; status.className = 'save-status is-dirty'; saveTimer = setTimeout(save, 600); };
-  document.querySelector('#save-editor').addEventListener('click', save);
+  const scheduleSave = () => { revision += 1; clearTimeout(saveTimer); status.textContent = 'Есть несохранённые изменения'; status.className = 'save-status is-dirty'; saveTimer = setTimeout(() => save().catch(() => {}), 600); };
+  document.querySelector('#save-editor').addEventListener('click', () => save().catch(() => {}));
+  window.addEventListener('beforeunload', event => {
+    if (pendingSaves || saveFailed || revision !== savedRevision) { event.preventDefault(); event.returnValue = ''; }
+  });
   document.querySelector('#close-editor').addEventListener('click', async event => {
     const button = event.currentTarget;
     button.disabled = true;
@@ -85,7 +110,12 @@
       const visible = expandedChips ? selected : selected.slice(0, 3);
       visible.forEach(option => { const chip = document.createElement('span'); chip.className = 'selector-chip'; chip.textContent = option.textContent.replace(/ \(\d+\)$/, ''); button.append(chip); });
       if (!expandedChips && selected.length > 3) { const more = document.createElement('span'); more.className = 'selector-chip selector-chip-more'; more.textContent = `+${selected.length - 3}`; button.append(more); }
-      options.innerHTML = [...select.options].map(option => `<label data-label="${option.textContent.toLowerCase()}"><input type="checkbox" value="${option.value}" ${option.selected ? 'checked' : ''}> <span>${option.textContent}</span></label>`).join('');
+      options.replaceChildren(...[...select.options].map(option => {
+        const label = document.createElement('label'); label.dataset.label = option.textContent.toLowerCase();
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = option.value; checkbox.checked = option.selected;
+        const text = document.createElement('span'); text.textContent = option.textContent;
+        label.append(checkbox, text); return label;
+      }));
       search.dispatchEvent(new Event('input'));
     };
     button.addEventListener('click', event => { if (event.target.closest('.selector-chip-more')) expandedChips = true; panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden) search.focus(); render(); });
@@ -130,9 +160,9 @@
     if (e.target.closest('.memo-assignee')) { const employee_id = row.querySelector('.task-employees').value; if (!employee_id) return message('Сначала выберите сотрудника из справочника', true); await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/match-assignee`, {method:'POST', body:JSON.stringify({source_name:e.target.dataset.sourceName, employee_id})}); location.reload(); }
     if (e.target.closest('.create-memo-assignee')) { const source_name=e.target.dataset.sourceName; const full_name=prompt('ФИО нового сотрудника',source_name); if(!full_name)return; await request(`/protocols/${id}/editor/tasks/${row.dataset.taskId}/create-assignee`,{method:'POST',body:JSON.stringify({source_name,full_name})}); location.reload(); }
   });
-  const renumber = () => rows().forEach((row, index) => { row.querySelector('.task-number').value = String(index + 1); row.classList.add('is-dirty'); });
+  const renumber = () => document.dispatchEvent(new Event('protocol:renumber'));
   const markDirty = target => target.closest('.task-row')?.classList.add('is-dirty');
-  document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); if (e.target.matches('.task-row input,.task-row textarea,.section-title,.protocol-field')) scheduleSave(); if (e.target.matches('.parent-task-search')) { const query=e.target.value.toLowerCase(); [...e.target.closest('.parent-task-field').querySelector('.task-parent').options].forEach((option,index) => { if(index) option.hidden=!option.text.toLowerCase().includes(query); }); } });
+  document.addEventListener('input', e => { if (e.target.closest('.task-row')) markDirty(e.target); if (e.target.matches('.task-row input,.task-row textarea,.section-title,.protocol-field,.signatory-row input')) scheduleSave(); if (e.target.matches('.parent-task-search')) { const query=e.target.value.toLowerCase(); [...e.target.closest('.parent-task-field').querySelector('.task-parent').options].forEach((option,index) => { if(index) option.hidden=!option.text.toLowerCase().includes(query); }); } });
   document.addEventListener('change', e => { if (e.target.matches('.task-row select,.task-row input')) scheduleSave(); if (e.target.matches('.task-employees,.task-groups')) updateAssigneeCount(e.target.closest('.task-row')); if (e.target.matches('.task-mode')) e.target.closest('.task-content').querySelector('.parent-task-field').classList.toggle('d-none', e.target.value !== 'subtasks'); });
   const syncSectionSelects = () => {
     document.querySelectorAll('.section-body').forEach(body => {
@@ -168,7 +198,7 @@
         dragged.querySelector('.task-section').value = target.querySelector('.task-section').value;
       }
       syncSectionSelects();
-      message('Порядок изменён — сохраните редактор');
+      scheduleSave();
     });
   }
   document.addEventListener('change', e => {
@@ -178,7 +208,17 @@
     body?.append(row);
     syncSectionSelects();
   });
-  let timer; document.querySelector('#employee-search')?.addEventListener('input', e => { clearTimeout(timer); timer = setTimeout(async () => { const result = await request(`/employees/search?q=${encodeURIComponent(e.target.value)}`); document.querySelector('#employee-results').innerHTML = result.map(item => `<div>${item.full_name}</div>`).join(''); }, 200); });
+  let timer; document.querySelector('#employee-search')?.addEventListener('input', e => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        const result = await request(`/employees/search?q=${encodeURIComponent(e.target.value)}`);
+        document.querySelector('#employee-results').replaceChildren(...result.map(item => {
+          const node = document.createElement('div'); node.textContent = item.full_name; return node;
+        }));
+      } catch (error) { message(error.message, true); }
+    }, 200);
+  });
   document.addEventListener('focusin', e => { if (e.target.matches('.text-clamp')) e.target.classList.add('expanded'); });
   document.addEventListener('focusout', e => { if (e.target.matches('.text-clamp')) e.target.classList.remove('expanded'); });
 })();

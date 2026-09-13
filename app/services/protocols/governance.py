@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models.domain import (
@@ -58,12 +58,14 @@ def transition(db: Session, protocol: Protocol, action: str, actor: CurrentUser)
     return new_status
 
 
-def register_document(db: Session, protocol: Protocol, user: str) -> ProtocolDocumentVersion:
+def register_document(db: Session, protocol: Protocol, user: str, content: bytes | None = None) -> ProtocolDocumentVersion:
+    # Serialize version-number allocation on both PostgreSQL and SQLite.
+    db.execute(update(Protocol).where(Protocol.id == protocol.id).values(version=Protocol.version))
     version = (db.scalar(select(func.max(ProtocolDocumentVersion.version)).where(
         ProtocolDocumentVersion.protocol_id == protocol.id
     )) or 0) + 1
     item = ProtocolDocumentVersion(
-        protocol_id=protocol.id, version=version, user=user,
+        protocol_id=protocol.id, version=version, user=user, content=content,
         file_url=f"/protocols/{protocol.id}/export/docx?version={version}",
     )
     db.add(item)

@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 from typing import Annotated, Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     app_name: str = "Protocol Management System"
     database_url: str = "sqlite:///./protocols.db"
     demo_mode: bool = False
+    auth_proxy_secret: SecretStr = SecretStr("")
     environment: str = "development"
     ai_enabled: bool = False
     ai_provider: str = "rule_based"

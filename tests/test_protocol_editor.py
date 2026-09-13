@@ -100,7 +100,8 @@ def test_editor_integration_workflow():
             ],
         },
     )
-    assert response.json() == {"saved": True}
+    assert response.json()["saved"] is True
+    assert response.json()["version"] >= 2
     client.post(
         f"/protocols/{protocol_id}/editor/bulk",
         json={
