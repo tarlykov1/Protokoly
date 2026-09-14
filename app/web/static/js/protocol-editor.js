@@ -28,6 +28,7 @@
     tasks: rows().map(row => ({
       id: row.dataset.taskId, number: value(row, '.task-number'), title: value(row, '.task-title'),
       description: value(row, '.task-description'), employee_ids: [...row.querySelector('.task-employees').selectedOptions].map(o => +o.value),
+      primary_employee_id: value(row, '.task-primary') || null,
       participant_group_ids: [...row.querySelector('.task-groups').selectedOptions].map(o => +o.value),
       deadline: value(row, '.task-deadline'), section_id: row.closest('.section-body')?.dataset.sectionId || value(row, '.task-section'), priority: value(row, '.task-priority'),
       task_mode: value(row, '.task-mode'), parent_task_id: value(row, '.task-parent') || null, position: rows().indexOf(row), is_controlled: row.querySelector('.task-controlled').checked

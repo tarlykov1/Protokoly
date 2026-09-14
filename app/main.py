@@ -44,10 +44,10 @@ from app.services.protocols.control import (
     ControlActor,
     ControlValidationError,
     InvalidStatusTransition,
-    OverdueChecker,
     ProtocolControlService,
     StatusChangeForbidden,
     days_remaining,
+    effective_control_status,
 )
 from app.services.protocols.editor import (
     apply_task_data,
@@ -378,7 +378,7 @@ def reports_export(
     if report_type not in {"tasks", "assignees", "departments"}:
         raise HTTPException(422, "Неизвестный вид отчёта")
     run = ReportRun(
-        report_type=report_type, user=actor.username, filters_json=query.as_dict(), status="running"
+        report_type=report_type, user=actor.username, filters_json={**query.as_dict(), "access_project_ids": list(db.info.get("project_scope", []))}, status="running"
     )
     db.add(run)
     db.flush()
@@ -427,6 +427,10 @@ def report_download(
     run = db.get(ReportRun, run_id)
     if not run or (run.user != actor.username and actor.role.value != "administrator"):
         raise HTTPException(404, "Отчёт не найден")
+    if "project_scope" in db.info:
+        recorded = run.filters_json.get("access_project_ids")
+        if recorded is None or not set(recorded).issubset(db.info["project_scope"]):
+            raise HTTPException(403, "Права на проекты отчёта изменились. Сформируйте новый отчёт")
     if run.status != "completed" or not run.file_path or not Path(run.file_path).is_file():
         raise HTTPException(409, "Файл отчёта недоступен")
     return FileResponse(run.file_path, filename=Path(run.file_path).name)
@@ -757,7 +761,7 @@ def import_session_reparse(
 
 @app.post("/protocols/import/{session_id}/confirm")
 def import_session_confirm(session_id: int, db: Session = Depends(get_db)):
-    protocol = confirm_session(db, db.get(ImportSession, session_id))
+    protocol = confirm_session(db, db.get(ImportSession, session_id), allow_review=True)
     return RedirectResponse(f"/protocols?status={protocol.status}", status_code=303)
 
 
@@ -1055,8 +1059,9 @@ def export_protocol_docx(
             content = ProtocolDocxExporter(db).export(protocol_id, mode=mode)
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from exc
-        register_document(db, protocol, current_user(request).username, content=content)
-        db.commit()
+        if "project_write_scope" not in db.info or protocol.project_id in db.info["project_write_scope"]:
+            register_document(db, protocol, current_user(request).username, content=content)
+            db.commit()
     # ASCII fallback avoids header encoding failures for Cyrillic protocol numbers.
     from urllib.parse import quote
 
@@ -1108,7 +1113,6 @@ def protocol_control(
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     tasks = list(protocol.tasks)
-    OverdueChecker(db).check(tasks)
     service = ProtocolControlService(db)
     filters = {
         "in_progress": {"in_progress", "waiting_control"},
@@ -1117,7 +1121,7 @@ def protocol_control(
         "attention": {"overdue", "rejected"},
     }
     visible_tasks = (
-        [task for task in tasks if task.control and task.control.status in filters[filter]]
+        [task for task in tasks if effective_control_status(task) in filters[filter]]
         if filter in filters
         else tasks
     )
@@ -1132,6 +1136,7 @@ def protocol_control(
             progress=service.progress(tasks),
             status_labels=STATUS_LABELS,
             days_remaining=days_remaining,
+            effective_control_status=effective_control_status,
             current_filter=filter,
         ),
     )
@@ -1157,7 +1162,7 @@ def change_protocol_task_status(
         ProtocolControlService(db).change_status(task, status, actor, comment)
     except StatusChangeForbidden as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except InvalidStatusTransition as exc:
+    except (InvalidStatusTransition, ControlValidationError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RedirectResponse(f"/protocols/{protocol_id}/control", status_code=303)
 
@@ -1619,7 +1624,7 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
     p = db.get(Protocol, protocol_id)
     if not p:
         raise HTTPException(status_code=404, detail="Протокол не найден")
-    rows, errors, warnings = protocol_plan(db, p)
+    rows, errors, warnings = protocol_plan(db, p, refresh=False)
     links = db.scalars(
         select(ProtocolTaskLink)
         .where(ProtocolTaskLink.protocol_task_id.in_([task.id for task in p.tasks] or [0]))
@@ -1650,7 +1655,7 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
         or 0
     )
     service = PublicationService(db, get_bitrix_gateway(db))
-    settings = service.settings_for(p)
+    settings = service.settings_for(p, persist=False)
     preview = service.preview(p)
     return templates.TemplateResponse(
         request,
@@ -1716,11 +1721,15 @@ def save_publication_settings(
 
 @app.post("/protocols/{protocol_id}/publish")
 def publish_protocol(
-    protocol_id: int, update_existing: bool = Form(False), db: Session = Depends(get_db)
+    protocol_id: int, update_existing: bool = Form(False), actor: CurrentUser = Depends(require(Permission.PUBLISH)), db: Session = Depends(get_db)
 ):
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
+    if get_settings().background_jobs_enabled:
+        from app.services.tasks.jobs import enqueue
+        enqueue(db, protocol, "publish", actor, update_existing)
+        return RedirectResponse("/integration-jobs", status_code=303)
     service = PublicationService(db, get_bitrix_gateway(db))
     try:
         result = service.publish(protocol, update_existing=update_existing)
@@ -1741,6 +1750,10 @@ def sync_protocol_bitrix(
     protocol = db.get(Protocol, protocol_id)
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
+    if get_settings().background_jobs_enabled:
+        from app.services.tasks.jobs import enqueue
+        enqueue(db, protocol, "sync", actor)
+        return RedirectResponse("/integration-jobs", status_code=303)
     result = BitrixTaskSyncService(db, get_bitrix_gateway(db)).sync(protocol)
     record_event(
         db, protocol, "bitrix_synced", actor.username, updated=result.updated, errors=result.errors
@@ -1810,7 +1823,9 @@ def _configured_employee_provider(db: Session):
             from urllib.parse import quote_plus
 
             user = quote_plus(parameters.get("username", ""))
-            password = quote_plus(parameters.get("password", ""))
+            from app.core.secrets import decrypt
+
+            password = quote_plus(decrypt(parameters.get("password", "")))
             credentials = f"{user}:{password}@" if user else ""
             driver = "postgresql+psycopg" if db_type == "postgresql" else db_type
             url = f"{driver}://{credentials}{parameters.get('host', '')}/{parameters.get('database', '')}"
@@ -1841,6 +1856,8 @@ def save_employee_source(
         raise HTTPException(status_code=422, detail="Неизвестный тип источника")
     source = _employee_source(db)
     source.provider_type = provider_type
+    from app.core.secrets import encrypt
+
     old_password = (source.parameters or {}).get("password", "")
     source.parameters = {
         "db_type": db_type,
@@ -1852,7 +1869,7 @@ def save_employee_source(
         "name_field": name_field.strip(),
         "email_field": email_field.strip(),
         "username": username.strip(),
-        "password": password or old_password,
+        "password": encrypt(password) if password else old_password,
     }
     db.commit()
     return RedirectResponse(
@@ -1899,7 +1916,8 @@ def save_bitrix_settings(
     settings = _bitrix_settings(db)
     settings.enabled, settings.mode = enabled, mode
     settings.portal_url = portal_url.strip().rstrip("/") or None
-    settings.webhook_url = webhook_url.strip().rstrip("/") or None
+    if webhook_url.strip():
+        settings.webhook_url = webhook_url.strip().rstrip("/")
     settings.user_id = user_id.strip() or None
     if token.strip():
         settings.encrypted_token = token.strip()
@@ -1994,24 +2012,23 @@ def save_task(
     priority: str | None = Form(None),
     create_as_subtasks: bool = Form(False),
     employee_ids: list[int] = Form([]),
+    primary_employee_id: int | None = Form(None),
     original_text: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     t = db.get(ProtocolTask, task_id)
-    t.number = number
-    t.section_id = section_id
-    t.title = title
-    t.description = description
+    if not t:
+        raise HTTPException(404, "Поручение не найдено")
+    try:
+        apply_task_data(db, t, dict(number=number, section_id=section_id, title=title,
+            description=description, deadline=deadline, priority=priority,
+            create_as_subtasks=create_as_subtasks, employee_ids=employee_ids,
+            primary_employee_id=primary_employee_id))
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
     t.acceptance_criteria = acceptance_criteria
-    t.deadline = deadline or None
-    t.priority = priority
-    t.create_as_subtasks = create_as_subtasks
     t.original_text = original_text
-    for a in list(t.assignments):
-        db.delete(a)
-    db.flush()
-    for i, eid in enumerate(employee_ids, 1):
-        db.add(ProtocolTaskAssignment(protocol_task_id=t.id, employee_id=eid, sort_order=i))
     db.commit()
     return RedirectResponse(f"/protocols/{t.protocol_id}", status_code=303)
 
@@ -2287,3 +2304,67 @@ def copy_participant_template(
     db.add(duplicate)
     db.commit()
     return {"id": duplicate.id, "name": duplicate.name}
+
+
+@app.get("/integration-jobs")
+def integration_jobs(request: Request, db: Session = Depends(get_db)):
+    from app.db.models.domain import IntegrationJob, IntegrationOperation
+    return templates.TemplateResponse(request, "integration_jobs.html", common_context(
+        "Интеграция", "Журнал интеграции",
+        jobs=db.scalars(select(IntegrationJob).order_by(IntegrationJob.id.desc()).limit(100)).all(),
+        operations=db.scalars(select(IntegrationOperation).where(IntegrationOperation.status != "done").order_by(IntegrationOperation.id.desc()).limit(100)).all()))
+
+
+@app.get("/protocols/{protocol_id}/integration-links")
+def integration_links(protocol_id: int, request: Request, db: Session = Depends(get_db)):
+    protocol = db.get(Protocol, protocol_id)
+    if not protocol:
+        raise HTTPException(404, "Протокол не найден")
+    links = db.scalars(select(ProtocolTaskLink).where(ProtocolTaskLink.protocol_task_id.in_([task.id for task in protocol.tasks] or [0]))).all()
+    return templates.TemplateResponse(request, "integration_links.html", common_context(
+        "Связи Битрикс24", "Сопоставление связей", protocol=protocol, links=links))
+
+
+@app.post("/protocols/{protocol_id}/integration-links/{link_id}/reconcile")
+def reconcile_integration_link(protocol_id: int, link_id: int, task_id: int = Form(...),
+                               link_kind: str = Form(...), db: Session = Depends(get_db)):
+    protocol = db.get(Protocol, protocol_id)
+    link = db.get(ProtocolTaskLink, link_id)
+    task = db.get(ProtocolTask, task_id)
+    if not protocol or not link or not task or task.protocol_id != protocol_id or link.protocol_task.protocol_id != protocol_id:
+        raise HTTPException(404, "Связь не найдена")
+    if link_kind not in {"protocol_root", "task_root", "instruction"}:
+        raise HTTPException(422, "Неизвестный тип связи")
+    gateway = get_bitrix_gateway(db)
+    remote = gateway.get_task(link.external_task_id)
+    if not remote:
+        raise HTTPException(409, "Задача Битрикс24 недоступна")
+    responsible = remote.get("responsibleid", remote.get("responsible_id"))
+    group = remote.get("groupid", remote.get("group_id"))
+    if not responsible or str(group) != str(protocol.project.bitrix_group_id):
+        raise HTTPException(409, "Проверьте группу и ответственного внешней задачи")
+    responsible = int(responsible)
+    if link_kind == "instruction" and responsible not in {a.employee.bitrix_user_id for a in task.assignments if a.employee}:
+        raise HTTPException(409, "Ответственный Битрикс24 не входит в состав исполнителей поручения")
+    if link_kind == "protocol_root":
+        key = f"protocol:{protocol.id}:root"
+    else:
+        task_type = "root" if link_kind == "task_root" else ("subtask" if task.create_as_subtasks else "independent")
+        key = f"protocol:{protocol.id}:task:{task.id}:{task_type}:{responsible}"
+    duplicate = db.scalar(select(ProtocolTaskLink).where(ProtocolTaskLink.publication_key == key, ProtocolTaskLink.id != link.id))
+    if duplicate:
+        raise HTTPException(409, "Эта позиция уже сопоставлена с другой задачей")
+    link.protocol_task_id, link.link_kind = task.id, link_kind
+    link.publication_key, link.responsible_id = key, responsible
+    link.remote_snapshot = remote
+    db.commit()
+    return RedirectResponse(f"/protocols/{protocol_id}/integration-links", status_code=303)
+
+
+@app.middleware("http")
+async def protocol_version_header(request: Request, call_next):
+    response = await call_next(request)
+    version = getattr(request.state, "protocol_version", None)
+    if version is not None:
+        response.headers["X-Protocol-Version"] = str(version)
+    return response

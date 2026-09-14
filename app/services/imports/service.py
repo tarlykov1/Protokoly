@@ -121,6 +121,10 @@ def resolve_payload(db: Session, payload: dict) -> dict:
     blocks = db.scalars(
         select(Block).where(Block.project_id == payload.get("project_id", -1))
     ).all()
+    employees_by_id = {employee.id: employee for employee in employees}
+    names: dict[str, set[int]] = {}
+    for employee in employees:
+        names.setdefault(norm(employee.full_name), set()).add(employee.id)
     resolution_errors: list[str] = []
     for task in payload.get("tasks", []):
         raw = task.get("assignee_raw") or ""
@@ -128,10 +132,8 @@ def resolve_payload(db: Session, payload: dict) -> dict:
         task["assignee_resolution"] = []
         for part in parts:
             n = norm(part.replace("Ответственный:", ""))
-            matching_ids = {e.id for e in employees if norm(e.full_name) == n} | alias_map.get(
-                n, set()
-            )
-            matches = [e for e in employees if e.id in matching_ids and e.is_active]
+            matching_ids = names.get(n, set()) | alias_map.get(n, set())
+            matches = [employees_by_id[eid] for eid in sorted(matching_ids) if eid in employees_by_id and employees_by_id[eid].is_active]
             if n in lists:
                 task["assignee_resolution"].append(
                     {"raw": part, "status": "found", "employee_list_id": lists[n].id}
@@ -352,7 +354,10 @@ def _as_date(value: str | None):
         return None
     if isinstance(value, date):
         return value
-    return date.fromisoformat(value)
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _task_assignees(task: dict) -> list[dict]:
@@ -381,7 +386,11 @@ def _task_assignees(task: dict) -> list[dict]:
     return assignees
 
 
-def confirm_session(db: Session, session: ImportSession) -> Protocol:
+def confirm_session(db: Session, session: ImportSession, *, allow_review: bool = False) -> Protocol:
+    if session is None:
+        raise HTTPException(404, "Сессия импорта не найдена")
+    if session.protocol_id:
+        return db.get(Protocol, session.protocol_id)
     payload = session.parsed_payload or {}
     if not payload.get("tasks"):
         raise HTTPException(
@@ -398,7 +407,7 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
         for error in (session.errors_payload or payload.get("errors") or [])
         if not any(marker in str(error) for marker in resolution_error_markers)
     ]
-    if blocking_errors:
+    if blocking_errors and not allow_review:
         raise HTTPException(
             400,
             "Импорт нельзя подтвердить: исправьте ошибки распознавания исполнителей.",
@@ -408,7 +417,7 @@ def confirm_session(db: Session, session: ImportSession) -> Protocol:
         for task in payload["tasks"]
         if not task.get("assignee_raw")
     ]
-    if missing_assignees:
+    if missing_assignees and not allow_review:
         raise HTTPException(
             400,
             "Импорт нельзя подтвердить: не распознаны исполнители поручений "

@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block content %}
+<h1>Сопоставление существующих задач Битрикс24</h1>
+<p>Выберите поручение и назначение каждой связи. Приложение проверит фактическую группу и ответственного в Битрикс24. Внешние задачи при сопоставлении не изменяются.</p>
+{% for link in links %}<form class="card p-3 mb-3" method="post" action="/protocols/{{ protocol.id }}/integration-links/{{ link.id }}/reconcile">
+<strong>{{ link.external_task_id }} · {{ link.link_kind }}</strong>
+<label>Поручение<select class="form-select" name="task_id">{% for task in protocol.tasks %}<option value="{{ task.id }}" {% if task.id == link.protocol_task_id %}selected{% endif %}>{{ task.number }} — {{ task.title }}</option>{% endfor %}</select></label>
+<label>Назначение<select class="form-select" name="link_kind"><option value="instruction">Задача исполнителя</option><option value="task_root">Корневая задача поручения</option><option value="protocol_root">Корневая задача протокола</option></select></label>
+<button class="btn btn-primary mt-2">Проверить и сохранить связь</button></form>{% else %}<p>Связей пока нет.</p>{% endfor %}
+{% endblock %}

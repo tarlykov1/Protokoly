@@ -68,10 +68,28 @@ class StatusPermissionPolicy:
         return actor.role.lower() in self.allowed_roles or protocol.created_by == actor.username
 
 
+def effective_control_status(task: ProtocolTask) -> str:
+    status = task.control.status if task.control else task.status
+    deadline = task.control.planned_date if task.control else task.deadline
+    if deadline and deadline < date.today() and status not in {"completed", "cancelled"}:
+        return "overdue"
+    return status
+
+
 class ProtocolControlService:
     def __init__(self, db: Session, permission_policy: StatusPermissionPolicy | None = None):
         self.db = db
         self.permission_policy = permission_policy or StatusPermissionPolicy()
+
+    def _check_primary(self, task, status):
+        if status != "completed" or "bitrix_user_id" not in self.db.info:
+            return
+        employees = [a.employee for a in task.assignments if a.employee]
+        primary = next((employee for employee in employees if employee.id == task.primary_employee_id), None)
+        if primary is None and len(employees) == 1:
+            primary = employees[0]
+        if primary is None or primary.bitrix_user_id != self.db.info["bitrix_user_id"]:
+            raise ControlValidationError("Завершить поручение может главный ответственный; для внешней задачи используйте синхронизацию Битрикс24")
 
     @staticmethod
     def can_transition(old_status: str, new_status: str) -> bool:
@@ -89,6 +107,7 @@ class ProtocolControlService:
         check_permission: bool = True,
     ) -> ProtocolTaskStatusHistory:
         new_status = "in_progress" if new_status == "returned" else new_status
+        self._check_primary(task, new_status)
         if check_permission and not self.permission_policy.can_change(actor, task.protocol):
             raise StatusChangeForbidden("Недостаточно прав для изменения статуса")
         if not self.can_transition(task.status, new_status):
@@ -132,6 +151,7 @@ class ProtocolControlService:
         comment: str | None = None,
         actual_date: date | None = None,
     ) -> ProtocolTaskControl:
+        self._check_primary(task, status)
         if status not in CONTROL_STATUSES:
             raise ControlValidationError("Неизвестный статус контроля")
         comment = comment.strip() if comment else None
@@ -160,7 +180,7 @@ class ProtocolControlService:
     @staticmethod
     def progress(tasks: list[ProtocolTask]) -> ProtocolProgress:
         total = len(tasks)
-        statuses = [task.control.status if task.control else task.status for task in tasks]
+        statuses = [effective_control_status(task) for task in tasks]
         completed = statuses.count("completed")
         overdue = statuses.count("overdue")
         active = sum(status in {"in_progress", "waiting_control"} for status in statuses)

@@ -2,6 +2,7 @@ import re
 from collections import defaultdict
 from datetime import date, timedelta
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -54,7 +55,9 @@ class ReportService:
         )
 
     def build(self, query: ReportQuery) -> ReportDataset:
-        tasks = self.session.scalars(self._statement(query)).unique().all()
+        tasks = self.session.scalars(self._statement(query).limit(10001)).unique().all()
+        if len(tasks) > 10000:
+            raise HTTPException(413, "В отчёте более 10 000 поручений. Уточните проект или период")
         task_by_id = {task.id: task for task in tasks}
         section_ids = {task.section_id for task in tasks if task.section_id}
         sections = {s.id: s.title for s in self.session.scalars(
@@ -67,15 +70,13 @@ class ReportService:
             if task.id in seen:
                 continue
             seen.add(task.id)
-            effective_status = task.status.lower()
+            effective_status = task.control.status.lower() if task.control else task.status.lower()
             if task.control and task.control.actual_date:
                 effective_status = "completed"
             elif task.control and task.control.status.lower() in COMPLETED_STATUSES:
                 effective_status = task.control.status.lower()
             # A synced external status is authoritative when the control row has not yet
             # been created by older installations.
-            if not task.control and task.external_links and task.external_links[0].external_status:
-                effective_status = task.external_links[0].external_status.lower()
             deferred = effective_status in DEFERRED_STATUSES or task.status.lower() in DEFERRED_STATUSES
             if deferred and not query.include_deferred:
                 continue
@@ -93,13 +94,13 @@ class ReportService:
                 include_in_report=task.include_in_report,
             ):
                 continue
-            assignments = [a for a in task.assignments if a.assignee_name]
+            assignments = sorted([a for a in task.assignments if a.assignee_name], key=lambda a: (a.employee_id != task.primary_employee_id, a.sort_order))
             names = tuple(dict.fromkeys(a.assignee_name.strip() for a in assignments if a.assignee_name))
             departments = tuple(dict.fromkeys(
                 a.employee.department.strip() for a in assignments
                 if a.employee and a.employee.department
             ))
-            external = next((x for x in task.external_links if x.external_system.upper() == "BITRIX24"), None)
+            external = next((x for x in task.external_links if x.external_system.upper() == "BITRIX24" and x.link_kind not in {"protocol_root", "task_root"}), None)
             bitrix_link = next((x for x in task.bitrix_links if x.bitrix_task_id), None)
             bitrix_id = str(external.external_task_id) if external else (
                 str(bitrix_link.bitrix_task_id) if bitrix_link else ""

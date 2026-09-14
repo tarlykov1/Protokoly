@@ -61,6 +61,9 @@ class ProtocolValidationService:
             not assignment.employee_id for assignment in task.assignments
         ):
             add("employee_not_found", "Пользователь не найден")
+        employee_ids = {a.employee_id for a in task.assignments if a.employee_id}
+        if len(employee_ids) > 1 and task.primary_employee_id not in employee_ids:
+            add("primary_required", "Выберите главного ответственного за поручение")
         if not task.deadline:
             add("deadline_required", "Отсутствует срок", "warning")
         if not task.section_id:

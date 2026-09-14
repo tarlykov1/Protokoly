@@ -80,15 +80,9 @@ def test_approved_protocol_is_published_without_employee_bitrix_id(publication_d
     db.commit()
     gateway = FakeTaskGateway()
 
-    result = PublicationService(db, gateway).publish(protocol)
-
-    assert result.created_count == 1
-    created = gateway.get_task("TASK-10001")
-    assert created["responsible_id"] is None
-    assert created["assignee_raw"] == "Прокофьев Д.Ю."
-    assert created["original_assignee"] == "Прокофьев Д.Ю."
-    assert created["assignee_match_result"] == "matched_without_bitrix_id"
-    assert created["missing_bitrix_id_reason"] == "У сотрудника отсутствует bitrix_id"
+    with pytest.raises(PublicationNotAllowedError, match="ID"):
+        PublicationService(db, gateway).publish(protocol)
+    assert gateway._tasks == {}
 
 
 def test_unmatched_text_assignee_is_published(publication_db):
@@ -98,13 +92,9 @@ def test_unmatched_text_assignee_is_published(publication_db):
     db.commit()
     gateway = FakeTaskGateway()
 
-    PublicationService(db, gateway).publish(protocol)
-
-    created = gateway.get_task("TASK-10001")
-    assert created["responsible_id"] is None
-    assert created["assignee_raw"] == "Внешний исполнитель"
-    assert created["assignee_match_result"] == "not_found"
-    assert created["missing_bitrix_id_reason"] == "Сотрудник не найден"
+    with pytest.raises(PublicationNotAllowedError, match="ID"):
+        PublicationService(db, gateway).publish(protocol)
+    assert gateway._tasks == {}
 
 
 @pytest.mark.parametrize("status", ["draft", "review"])

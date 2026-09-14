@@ -39,6 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
           python -m pip install -e ".[dev]"
 
       - name: Wait for PostgreSQL
@@ -111,3 +112,50 @@ jobs:
           if [ -f /tmp/protocol-management.pid ]; then
             kill "$(cat /tmp/protocol-management.pid)" || true
           fi
+
+  docker-desktop-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate isolated test credentials
+        run: |
+          mkdir -p .local/secrets
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          for name in ('database_password', 'encryption_key', 'local_password'):
+              Path('.local/secrets', name).write_bytes(base64.urlsafe_b64encode(os.urandom(32)))
+          PY
+      - name: Build and start the actual stack
+        run: docker compose up -d --build --wait --wait-timeout 180
+      - name: Check migrations, authentication and worker
+        run: |
+          curl --fail --silent http://localhost:8000/ready
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:8000/settings/integrations)" = "401"
+          python - <<'PY'
+          import base64, urllib.request
+          from pathlib import Path
+          password = Path('.local/secrets/local_password').read_text().strip()
+          token = base64.b64encode(('local:' + password).encode()).decode()
+          request = urllib.request.Request('http://localhost:8000/settings/integrations', headers={'Authorization': 'Basic ' + token})
+          assert urllib.request.urlopen(request).status == 200
+          PY
+          docker compose exec -T web python -m alembic current
+          docker compose exec -T worker python -c 'from app.services.tasks.jobs import run_next; assert run_next() is False'
+          docker compose restart web worker
+          docker compose up -d --wait --wait-timeout 60
+          curl --fail --silent http://localhost:8000/ready
+      - name: Exercise backup script and validate archive
+        shell: pwsh
+        run: |
+          ./scripts/windows/Backup-Protokoly.ps1
+          $backup = Get-ChildItem .local/backups -Directory | Select-Object -Last 1
+          if (-not (Test-Path "$($backup.FullName)/database.dump")) { throw 'Missing database backup' }
+          tar -tzf "$($backup.FullName)/files.tar.gz"
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid file archive' }
+      - name: Stack logs
+        if: failure()
+        run: docker compose logs --tail=150
+      - name: Stop isolated stack
+        if: always()
+        run: docker compose down -v

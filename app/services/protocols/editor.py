@@ -80,6 +80,14 @@ def apply_task_data(db: Session, task: ProtocolTask, data: dict) -> ProtocolTask
         set_group_assignments(db, task, data.get("participant_group_ids") or [])
     elif "participant_group_id" in data:
         expand_group_assignment(db, task, data["participant_group_id"] or None)
+    employees = {a.employee_id for a in task.assignments if a.employee_id}
+    if "primary_employee_id" in data:
+        primary = int(data["primary_employee_id"]) if data["primary_employee_id"] else None
+        if primary and primary not in employees:
+            raise ValueError("Главный ответственный должен входить в состав исполнителей")
+        task.primary_employee_id = primary or (next(iter(employees)) if len(employees) == 1 else None)
+    elif task.primary_employee_id not in employees:
+        task.primary_employee_id = next(iter(employees)) if len(employees) == 1 else None
     task.validation_status = "ready" if not editor_errors(task) else "validation_required"
     return task
 

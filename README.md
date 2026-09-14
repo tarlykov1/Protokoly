@@ -1,3 +1,13 @@
+## Запуск на Windows через Docker Desktop
+
+Инструкция с первым подключением Битрикс24, обновлением и резервным копированием: [WINDOWS_DOCKER.md](docs/WINDOWS_DOCKER.md).
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\Start-Protokoly.ps1
+```
+
+Рабочий контур: вход по локальному паролю, доступ к проектам по группам Битрикс24, завершение поручения по главному ответственному. Старые команды демонстрационного запуска ниже предназначены для разработки.
+
 # Protocol Management System
 
 Аудит актуального кода, исправления, ограничения и порядок обновления: [docs/CODE_AUDIT.md](docs/CODE_AUDIT.md).
