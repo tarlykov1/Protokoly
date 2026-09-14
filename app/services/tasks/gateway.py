@@ -15,6 +15,10 @@ class BitrixAPIError(RuntimeError):
     """A transport or application-level Bitrix24 REST failure."""
 
 
+class BitrixRejectedError(BitrixAPIError):
+    """Bitrix returned an explicit application error, so creation was rejected."""
+
+
 class TaskGateway(ABC):
     external_system = "BITRIX24"
 
@@ -166,7 +170,7 @@ class Bitrix24RestGateway(TaskGateway):
                 if not isinstance(body, dict):
                     raise BitrixAPIError("Некорректный ответ Bitrix24")
                 if body.get("error"):
-                    raise BitrixAPIError(body.get("error_description") or body["error"])
+                    raise BitrixRejectedError(body.get("error_description") or body["error"])
                 log.response = sanitize_payload(body)
                 log.status = "success"
                 return body if full_response else body.get("result")

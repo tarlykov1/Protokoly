@@ -181,3 +181,22 @@ def test_legacy_control_endpoint_rejects_stale_version(sample):
         assert task.control.status == "in_progress"
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+def test_explicit_bitrix_rejection_can_be_retried(sample):
+    from app.services.tasks.gateway import BitrixRejectedError
+    db, protocol, _ = sample
+    class RejectOnce(FakeBitrixGateway):
+        rejected = False
+        def create_task(self, payload):
+            if not self.rejected:
+                self.rejected = True
+                raise BitrixRejectedError("invalid field")
+            return super().create_task(payload)
+    gateway = RejectOnce()
+    service = PublicationService(db, gateway)
+    with pytest.raises(BitrixRejectedError):
+        service.publish(protocol)
+    assert db.scalar(select(IntegrationOperation)).status == "pending"
+    assert len(service.publish(protocol).links) == 2
+    assert len(gateway._tasks) == 2

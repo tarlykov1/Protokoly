@@ -47,7 +47,7 @@ class BitrixTaskSyncService:
                 link.external_status = raw_status
                 task = link.protocol_task
                 employee_ids = {a.employee_id for a in task.assignments if a.employee_id}
-                primary_id = task.primary_employee_id or (next(iter(employee_ids)) if len(employee_ids) == 1 else None)
+                primary_id = task.primary_employee_id if task.primary_employee_id in employee_ids else (next(iter(employee_ids)) if len(employee_ids) == 1 else None)
                 employee = self.db.get(Employee, primary_id) if primary_id else None
                 relevant = [item for item in links if item.protocol_task_id == task.id and item.link_kind != "protocol_root" and item.link_kind != "task_root"]
                 if link.link_kind in {"protocol_root", "task_root"}:

@@ -8,7 +8,7 @@ from app.db.models.domain import IntegrationJob, Protocol
 from app.db.session import SessionLocal
 from app.services.project_access import configure_scope
 from app.services.tasks.gateway import get_bitrix_gateway
-from app.services.tasks.publication import PublicationService
+from app.services.tasks.publication import PublicationNotAllowedError, PublicationService
 from app.services.tasks.sync import BitrixTaskSyncService
 
 
@@ -55,9 +55,9 @@ def run_next():
                             if result.errors:
                                 raise ValueError("; ".join(result.messages))
                     status, message = "done", "Операция завершена"
-                except Exception:
+                except Exception as exc:
                     db.rollback()
-                    status, message = "failed", "Операция не завершена. Проверьте права, соединение и журнал интеграции; повторите после устранения причины"
+                    status, message = "failed", str(exc) if isinstance(exc, PublicationNotAllowedError) else "Операция не завершена. Проверьте права, соединение и журнал интеграции; повторите после устранения причины"
                 # Queue state is operational metadata, updated outside user scoping.
                 db.info.pop("project_scope", None)
                 db.expunge_all()

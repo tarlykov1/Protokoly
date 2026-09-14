@@ -15,7 +15,7 @@ from app.db.models.domain import (
     PublicationSettings,
 )
 from app.services.demo_publication import protocol_plan
-from app.services.tasks.gateway import TaskGateway
+from app.services.tasks.gateway import BitrixRejectedError, TaskGateway
 from app.services.validation import ProtocolValidationService
 
 
@@ -105,6 +105,8 @@ class PublicationService:
             )
         if protocol.status not in {"approved", "published"}:
             raise PublicationNotAllowedError("Можно публиковать только утверждённый протокол")
+        settings = self.settings_for(protocol)
+        rows, errors, _ = protocol_plan(self.db, protocol)
         validation = ProtocolValidationService().validate(protocol)
         if not validation.can_publish:
             raise PublicationNotAllowedError(
@@ -114,8 +116,6 @@ class PublicationService:
                     for issue in validation.errors
                 )
             )
-        settings = self.settings_for(protocol)
-        rows, errors, _ = protocol_plan(self.db, protocol)
         # Keep compatibility for installations that used project defaults before settings existed.
         if errors:
             raise PublicationNotAllowedError("; ".join(errors))
@@ -208,9 +208,9 @@ class PublicationService:
             self.db.commit()  # Durable intent before the external side effect.
             try:
                 external = self.gateway.create_task(payload)
-            except Exception:
-                operation.status = "unknown"
-                operation.error = "Результат внешнего запроса неизвестен; требуется сверка"
+            except Exception as exc:
+                operation.status = "pending" if isinstance(exc, BitrixRejectedError) else "unknown"
+                operation.error = "Битрикс24 отклонил запрос; исправьте настройки перед повтором" if isinstance(exc, BitrixRejectedError) else "Результат внешнего запроса неизвестен; требуется сверка"
                 self.db.commit()
                 raise
         link = self._add_link(task_id, external)
