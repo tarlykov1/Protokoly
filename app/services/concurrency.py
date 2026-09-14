@@ -29,6 +29,8 @@ async def protect_mutation(request, db):
     protocol = db.get(Protocol, int(protocol_id))
     if protocol is None:
         raise HTTPException(404, "Протокол не найден")
+    if "project_write_scope" in db.info and protocol.project_id not in db.info["project_write_scope"]:
+        raise HTTPException(403, "Нет права изменять этот протокол")
     db.info["locked_protocol_id"] = protocol.id
     if request.url.path.endswith("/editor/save"):
         return  # This route performs its own atomic version claim.
@@ -49,3 +51,4 @@ async def protect_mutation(request, db):
     if result.rowcount != 1:
         raise HTTPException(409, "Документ изменён другим пользователем. Обновите страницу")
     set_committed_value(protocol, "version", expected + 1)
+    request.state.protocol_version = expected + 1

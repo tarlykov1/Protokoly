@@ -174,6 +174,8 @@ class PublicationService:
             if task.control is None:
                 self.db.add(ProtocolTaskControl(protocol_task=task, status="pending", planned_date=task.deadline))
         protocol.status = "published"
+        if self.db.info.get("locked_protocol_id") != protocol.id:
+            protocol.version += 1
         self.db.commit()
         return PublicationResult(links, reused=reused == len(links) and not update_existing, updated_count=reused)
 

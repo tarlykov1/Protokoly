@@ -76,6 +76,8 @@ class BitrixTaskSyncService:
             except Exception as exc:
                 errors += 1
                 messages.append(f"{link.external_task_id}: {exc}")
+        if self.db.info.get("locked_protocol_id") != protocol.id:
+            protocol.version += 1
         self.db.commit()
         return SyncResult(updated, errors, now, tuple(messages))
 

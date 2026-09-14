@@ -2358,3 +2358,12 @@ def reconcile_integration_link(protocol_id: int, link_id: int, task_id: int = Fo
     link.remote_snapshot = remote
     db.commit()
     return RedirectResponse(f"/protocols/{protocol_id}/integration-links", status_code=303)
+
+
+@app.middleware("http")
+async def protocol_version_header(request: Request, call_next):
+    response = await call_next(request)
+    version = getattr(request.state, "protocol_version", None)
+    if version is not None:
+        response.headers["X-Protocol-Version"] = str(version)
+    return response
