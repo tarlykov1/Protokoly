@@ -64,6 +64,7 @@ class BitrixTaskSyncService:
                 deadline = self._date(remote.get("deadline")) or control.planned_date or link.protocol_task.deadline
                 control.planned_date = deadline
                 control.status = "overdue" if status != "completed" and deadline and deadline < date.today() else status
+                task.status = control.status
                 closed = self._date(remote.get("closed_date") or remote.get("closeddate"))
                 if status == "completed":
                     control.actual_date = closed or date.today()

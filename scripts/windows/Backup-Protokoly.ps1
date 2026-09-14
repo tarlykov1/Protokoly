@@ -9,10 +9,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Ошибка резервного копирования БД.' }
     & docker compose cp db:/tmp/protokoly-backup.dump (Join-Path $backupPath 'database.dump')
     if ($LASTEXITCODE -ne 0) { throw 'Ошибка копирования БД.' }
-    & docker compose run --rm --no-deps web tar -czf /app/var/backup-files.tar.gz --exclude=backup-files.tar.gz -C /app/var .
+    & docker compose run --rm --no-deps --user 0 --volume "${backupPath}:/backup" web tar -czf /backup/files.tar.gz -C /app/var .
     if ($LASTEXITCODE -ne 0) { throw 'Ошибка архива файлов.' }
-    & docker compose cp web:/app/var/backup-files.tar.gz (Join-Path $backupPath 'files.tar.gz')
-    if ($LASTEXITCODE -ne 0) { throw 'Ошибка копирования файлов.' }
     Copy-Item '.local/secrets' (Join-Path $backupPath 'secrets') -Recurse
     Write-Host "Резервная копия: $backupPath"
 } finally { & docker compose start web worker }

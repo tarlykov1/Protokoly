@@ -145,6 +145,14 @@ jobs:
           docker compose restart web worker
           docker compose up -d --wait --wait-timeout 60
           curl --fail --silent http://localhost:8000/ready
+      - name: Exercise backup script and validate archive
+        shell: pwsh
+        run: |
+          ./scripts/windows/Backup-Protokoly.ps1
+          $backup = Get-ChildItem .local/backups -Directory | Select-Object -Last 1
+          if (-not (Test-Path "$($backup.FullName)/database.dump")) { throw 'Missing database backup' }
+          tar -tzf "$($backup.FullName)/files.tar.gz"
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid file archive' }
       - name: Stack logs
         if: failure()
         run: docker compose logs --tail=150

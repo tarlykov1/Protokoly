@@ -121,13 +121,14 @@ def test_project_scope_hides_direct_reads_and_blocks_mutations(sample, monkeypat
     settings = IntegrationSettings(type="bitrix24", mode="rest", enabled=True, webhook_url="https://example.test/rest/1/key")
     db.add(settings)
     db.commit()
-    visible_id, hidden_id, task_id = protocol.id, hidden.id, hidden_task.id
+    visible_id, hidden_id, task_id, visible_task_id = protocol.id, hidden.id, hidden_task.id, task.id
     monkeypatch.setattr(Bitrix24RestGateway, "check_connection", lambda self: {"ID": 11})
     monkeypatch.setattr(Bitrix24RestGateway, "_list_all", lambda self, method, payload: [{"USER_ID": "11", "ROLE": "K"}] if payload["ID"] == 21 else [])
     configure_scope(db, username="local")
     assert [row.id for row in db.scalars(select(Protocol)).all()] == [visible_id]
     assert db.get(Protocol, hidden_id) is None
     assert db.get(ProtocolTask, task_id) is None
+    assert db.get(ProtocolTask, visible_task_id) is not None
     visible = db.get(Protocol, visible_id)
     visible.title = "Forbidden"
     with pytest.raises(HTTPException) as error:
@@ -136,3 +137,47 @@ def test_project_scope_hides_direct_reads_and_blocks_mutations(sample, monkeypat
     db.rollback()
     for client in db.info.pop("owned_http_clients", []):
         client.close()
+
+
+def test_worker_executes_persisted_job(sample, monkeypatch):
+    from sqlalchemy.orm import sessionmaker
+
+    from app.db.models.domain import IntegrationJob
+    from app.services.auth import CurrentUser, Role
+    from app.services.tasks import jobs
+    db, protocol, _ = sample
+    monkeypatch.setattr(jobs, "SessionLocal", sessionmaker(bind=db.get_bind(), expire_on_commit=False))
+    gateway = FakeBitrixGateway()
+    monkeypatch.setattr(jobs, "get_bitrix_gateway", lambda db: gateway)
+    job = jobs.enqueue(db, protocol, "publish", CurrentUser("operator", Role.ADMIN))
+    assert jobs.enqueue(db, protocol, "publish", CurrentUser("operator", Role.ADMIN)).id == job.id
+    assert jobs.run_next() is True
+    db.expire_all()
+    assert db.get(IntegrationJob, job.id).status == "done"
+    assert db.get(Protocol, protocol.id).status == "published"
+    assert len(gateway._tasks) == 2
+    assert jobs.run_next() is False
+
+
+def test_legacy_control_endpoint_rejects_stale_version(sample):
+    from fastapi.testclient import TestClient
+
+    from app.db.session import get_db
+    from app.main import app
+    db, protocol, task = sample
+    engine = db.get_bind()
+    def override_db():
+        with Session(engine) as session:
+            yield session
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            url = f"/protocol-tasks/{task.id}/control"
+            first = client.post(url, data={"status": "in_progress", "protocol_version": protocol.version}, follow_redirects=False)
+            assert first.status_code == 303
+            stale = client.post(url, data={"status": "pending", "protocol_version": protocol.version}, follow_redirects=False)
+            assert stale.status_code == 409
+        db.expire_all()
+        assert task.control.status == "in_progress"
+    finally:
+        app.dependency_overrides.pop(get_db, None)

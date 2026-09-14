@@ -70,7 +70,7 @@ class ReportService:
             if task.id in seen:
                 continue
             seen.add(task.id)
-            effective_status = task.status.lower()
+            effective_status = task.control.status.lower() if task.control else task.status.lower()
             if task.control and task.control.actual_date:
                 effective_status = "completed"
             elif task.control and task.control.status.lower() in COMPLETED_STATUSES:

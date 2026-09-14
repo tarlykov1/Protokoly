@@ -44,10 +44,10 @@ from app.services.protocols.control import (
     ControlActor,
     ControlValidationError,
     InvalidStatusTransition,
-    OverdueChecker,
     ProtocolControlService,
     StatusChangeForbidden,
     days_remaining,
+    effective_control_status,
 )
 from app.services.protocols.editor import (
     apply_task_data,
@@ -1112,7 +1112,6 @@ def protocol_control(
     if not protocol:
         raise HTTPException(status_code=404, detail="Протокол не найден")
     tasks = list(protocol.tasks)
-    OverdueChecker(db).check(tasks)
     service = ProtocolControlService(db)
     filters = {
         "in_progress": {"in_progress", "waiting_control"},
@@ -1121,7 +1120,7 @@ def protocol_control(
         "attention": {"overdue", "rejected"},
     }
     visible_tasks = (
-        [task for task in tasks if task.control and task.control.status in filters[filter]]
+        [task for task in tasks if effective_control_status(task) in filters[filter]]
         if filter in filters
         else tasks
     )
@@ -1136,6 +1135,7 @@ def protocol_control(
             progress=service.progress(tasks),
             status_labels=STATUS_LABELS,
             days_remaining=days_remaining,
+            effective_control_status=effective_control_status,
             current_filter=filter,
         ),
     )
@@ -1161,7 +1161,7 @@ def change_protocol_task_status(
         ProtocolControlService(db).change_status(task, status, actor, comment)
     except StatusChangeForbidden as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except InvalidStatusTransition as exc:
+    except (InvalidStatusTransition, ControlValidationError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RedirectResponse(f"/protocols/{protocol_id}/control", status_code=303)
 

@@ -53,7 +53,8 @@ def _predicate(table, ids, seen=()):
         return None
     if table.name == "projects":
         return table.c.id.in_(ids)
-    for foreign_key in table.foreign_keys:
+    priority = {"project_id": 0, "protocol_id": 1, "protocol_task_id": 2}
+    for foreign_key in sorted(table.foreign_keys, key=lambda fk: (priority.get(fk.parent.name, 10), fk.parent.name)):
         parent = foreign_key.column.table
         condition = _predicate(parent, ids, (*seen, table.name))
         if condition is not None:
