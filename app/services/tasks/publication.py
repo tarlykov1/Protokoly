@@ -54,7 +54,10 @@ class PublicationService:
         self.gateway = gateway
         self.protocol_base_url = protocol_base_url.rstrip("/")
 
-    def settings_for(self, protocol: Protocol) -> PublicationSettings:
+    def settings_for(self, protocol: Protocol, *, persist: bool = True) -> PublicationSettings:
+        if protocol.publication_settings is None and not persist:
+            return PublicationSettings(bitrix_project_id=protocol.project.bitrix_group_id,
+                parent_task_mode="separate", accomplices=[], observers=[], custom_fields={}, add_protocol_link=True)
         if protocol.publication_settings is None:
             protocol.publication_settings = PublicationSettings(
                 bitrix_project_id=protocol.project.bitrix_group_id
@@ -63,8 +66,8 @@ class PublicationService:
         return protocol.publication_settings
 
     def preview(self, protocol: Protocol) -> PublicationPreview:
-        settings = self.settings_for(protocol)
-        rows, plan_errors, _ = protocol_plan(self.db, protocol)
+        settings = self.settings_for(protocol, persist=False)
+        rows, plan_errors, _ = protocol_plan(self.db, protocol, refresh=False)
         missing_employees: list[str] = []
         missing_ids: list[str] = []
         missing_deadlines: list[str] = []

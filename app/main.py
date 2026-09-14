@@ -1059,8 +1059,9 @@ def export_protocol_docx(
             content = ProtocolDocxExporter(db).export(protocol_id, mode=mode)
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from exc
-        register_document(db, protocol, current_user(request).username, content=content)
-        db.commit()
+        if "project_write_scope" not in db.info or protocol.project_id in db.info["project_write_scope"]:
+            register_document(db, protocol, current_user(request).username, content=content)
+            db.commit()
     # ASCII fallback avoids header encoding failures for Cyrillic protocol numbers.
     from urllib.parse import quote
 
@@ -1623,7 +1624,7 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
     p = db.get(Protocol, protocol_id)
     if not p:
         raise HTTPException(status_code=404, detail="Протокол не найден")
-    rows, errors, warnings = protocol_plan(db, p)
+    rows, errors, warnings = protocol_plan(db, p, refresh=False)
     links = db.scalars(
         select(ProtocolTaskLink)
         .where(ProtocolTaskLink.protocol_task_id.in_([task.id for task in p.tasks] or [0]))
@@ -1654,7 +1655,7 @@ def publication_plan(protocol_id: int, request: Request, db: Session = Depends(g
         or 0
     )
     service = PublicationService(db, get_bitrix_gateway(db))
-    settings = service.settings_for(p)
+    settings = service.settings_for(p, persist=False)
     preview = service.preview(p)
     return templates.TemplateResponse(
         request,

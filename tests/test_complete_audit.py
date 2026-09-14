@@ -200,3 +200,30 @@ def test_explicit_bitrix_rejection_can_be_retried(sample):
     assert db.scalar(select(IntegrationOperation)).status == "pending"
     assert len(service.publish(protocol).links) == 2
     assert len(gateway._tasks) == 2
+
+
+def test_group_reader_can_preview_and_download_without_writes(sample, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.db.session import get_db
+    from app.main import app
+    db, protocol, _ = sample
+    db.add(IntegrationSettings(type="bitrix24", mode="rest", enabled=True, webhook_url="https://example.test/rest/1/key"))
+    db.commit()
+    protocol_id = protocol.id
+    monkeypatch.setattr(Bitrix24RestGateway, "check_connection", lambda self: {"ID": 11})
+    monkeypatch.setattr(Bitrix24RestGateway, "_list_all", lambda self, method, payload: [{"USER_ID": "11", "ROLE": "K"}])
+    configure_scope(db, username="local")
+    def override_db():
+        yield db
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            for suffix in ("publication-plan", "control", "export/docx"):
+                response = client.get(f"/protocols/{protocol_id}/{suffix}")
+                assert response.status_code == 200, response.text[:200]
+        assert db.get(Protocol, protocol_id).publication_settings is None
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        for client in db.info.pop("owned_http_clients", []):
+            client.close()

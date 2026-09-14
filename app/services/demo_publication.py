@@ -123,9 +123,10 @@ class FakeTaskGateway:
         return "created", str(ext), payload, {"simulation": True, "created": True}, None
 
 
-def protocol_plan(db: Session, protocol: Protocol):
+def protocol_plan(db: Session, protocol: Protocol, *, refresh: bool = True):
     # Group membership stays editable until this exact point; publish from a fresh expansion.
-    refresh_protocol_group_assignments(db, protocol)
+    if refresh:
+        refresh_protocol_group_assignments(db, protocol)
     planner = TaskPlanningService()
     rows = []
     errors = []
