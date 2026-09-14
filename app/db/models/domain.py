@@ -17,6 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
+from app.core.secrets import SecretText
 from app.db.base import Base
 
 
@@ -36,9 +37,9 @@ class IntegrationSettings(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
     mode: Mapped[str] = mapped_column(String(16), default="fake")
     portal_url: Mapped[str | None] = mapped_column(String(1000))
-    webhook_url: Mapped[str | None] = mapped_column(String(1000))
+    webhook_url: Mapped[str | None] = mapped_column(SecretText())
     user_id: Mapped[str | None] = mapped_column(String(64))
-    encrypted_token: Mapped[str | None] = mapped_column(Text())
+    encrypted_token: Mapped[str | None] = mapped_column(SecretText())
 
 
 class IntegrationLog(Base):
@@ -385,6 +386,7 @@ class ProtocolTask(TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text())
     acceptance_criteria: Mapped[str | None] = mapped_column(Text())
     deadline: Mapped[date | None] = mapped_column(Date())
+    primary_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="SET NULL"))
     original_deadline: Mapped[date | None] = mapped_column(Date())
     include_in_report: Mapped[bool] = mapped_column(Boolean(), default=True)
     priority: Mapped[str | None] = mapped_column(String(32))
@@ -528,6 +530,10 @@ class ProtocolTaskLink(TimestampMixin, Base):
     external_task_id: Mapped[str] = mapped_column(String(255))
     external_task_url: Mapped[str | None] = mapped_column(String(1000))
     external_status: Mapped[str | None] = mapped_column(String(64))
+    publication_key: Mapped[str | None] = mapped_column(String(255), unique=True)
+    link_kind: Mapped[str] = mapped_column(String(32), default="legacy", server_default="legacy")
+    responsible_id: Mapped[int | None] = mapped_column(Integer())
+    remote_snapshot: Mapped[dict | None] = mapped_column(JSON())
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     protocol_task: Mapped[ProtocolTask] = relationship(back_populates="external_links")
 
@@ -685,3 +691,32 @@ def clear_orphaned_protocol_groups(_mapper, connection, target: Protocol) -> Non
             ProtocolParticipantGroup.protocol_id == target.id
         )
     )
+
+
+class IntegrationOperation(Base):
+    """Durable intent; inflight/unknown creations must be reconciled before retry."""
+    __tablename__ = "integration_operations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    protocol_task_id: Mapped[int] = mapped_column(ForeignKey("protocol_tasks.id", ondelete="CASCADE"))
+    operation_key: Mapped[str] = mapped_column(String(255), unique=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    link_kind: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict] = mapped_column(JSON())
+    external_task_id: Mapped[str | None] = mapped_column(String(255))
+    error: Mapped[str | None] = mapped_column(Text())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class IntegrationJob(Base):
+    __tablename__ = "integration_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    protocol_id: Mapped[int] = mapped_column(ForeignKey("protocols.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    requested_by: Mapped[str] = mapped_column(String(255))
+    bitrix_user_id: Mapped[int | None] = mapped_column(Integer())
+    update_existing: Mapped[bool] = mapped_column(Boolean(), default=False)
+    message: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

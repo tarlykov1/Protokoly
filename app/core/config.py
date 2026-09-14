@@ -14,10 +14,17 @@ LOCAL_ENVIRONMENTS = {"development", "dev", "local", "test", "testing"}
 
 class Settings(BaseSettings):
     app_name: str = "Protocol Management System"
+    database_password_file: str = ""
     database_url: str = "sqlite:///./protocols.db"
     demo_mode: bool = False
     auth_proxy_secret: SecretStr = SecretStr("")
     environment: str = "development"
+    secrets_key_file: str = ""
+    local_password_file: str = ""
+    background_jobs_enabled: bool = False
+    bitrix_access_enabled: bool = False
+    bitrix_parallel_requests: int = Field(default=2, ge=1, le=10)
+    integration_lock_dir: str = "var/locks"
     ai_enabled: bool = False
     ai_provider: str = "rule_based"
     ai_allow_external: bool = False
@@ -38,6 +45,15 @@ class Settings(BaseSettings):
             and "demo_mode" not in self.model_fields_set
         ):
             self.demo_mode = True
+        return self
+
+    @model_validator(mode="after")
+    def load_database_password(self):
+        if self.database_password_file:
+            from pathlib import Path
+            from urllib.parse import quote_plus
+            password = Path(self.database_password_file).read_text().strip()
+            self.database_url = f"postgresql+psycopg://protocols:{quote_plus(password)}@db:5432/protocols"
         return self
 
     @field_validator("allowed_hosts", mode="before")

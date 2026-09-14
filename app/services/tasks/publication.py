@@ -5,8 +5,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.locks import operation_lock
 from app.db.models.domain import (
-    Employee,
+    IntegrationOperation,
     Protocol,
     ProtocolSection,
     ProtocolTaskControl,
@@ -91,9 +92,17 @@ class PublicationService:
         )
 
     def publish(self, protocol: Protocol, *, update_existing: bool = False) -> PublicationResult:
+        if self.db.info.get("locked_protocol_id") == protocol.id:
+            return self._publish(protocol, update_existing=update_existing)
+        with operation_lock(self.db, f"protocol:{protocol.id}"):
+            return self._publish(protocol, update_existing=update_existing)
+
+    def _publish(self, protocol: Protocol, *, update_existing: bool) -> PublicationResult:
         existing = self._links(protocol)
-        if existing and not update_existing:
-            return PublicationResult(existing, reused=True)
+        if any(link.publication_key is None for link in existing):
+            raise PublicationNotAllowedError(
+                "Существующие связи созданы старой версией: сначала сопоставьте их с поручениями в журнале интеграции"
+            )
         if protocol.status not in {"approved", "published"}:
             raise PublicationNotAllowedError("Можно публиковать только утверждённый протокол")
         validation = ProtocolValidationService().validate(protocol)
@@ -110,65 +119,107 @@ class PublicationService:
         # Keep compatibility for installations that used project defaults before settings existed.
         if errors:
             raise PublicationNotAllowedError("; ".join(errors))
+        from app.core.config import get_settings
+        if get_settings().bitrix_access_enabled and settings.bitrix_project_id != protocol.project.bitrix_group_id:
+            raise PublicationNotAllowedError("Группа публикации должна совпадать с группой выбранного проекта")
+        if not rows:
+            raise PublicationNotAllowedError("Нет поручений для публикации")
+        if any(planned.responsible_id is None and settings.default_responsible_id is None for _, planned in rows):
+            raise PublicationNotAllowedError("Не сопоставлен исполнитель с ID пользователя Битрикс24")
+        # Parent instructions precede children independently of display order.
+        def depth(task):
+            parents = {item.id: item.parent_task_id for item in protocol.tasks}
+            seen = set()
+            parent = task.parent_task_id
+            while parent:
+                if parent in seen or parent == task.id:
+                    raise PublicationNotAllowedError("Циклическая структура поручений")
+                seen.add(parent)
+                parent = parents.get(parent)
+            return len(seen)
+        rows.sort(key=lambda row: (depth(row[0]), row[0].position, row[1].task_type != "root"))
+        expected_keys = {f"protocol:{protocol.id}:task:{task.id}:{planned.task_type}:{planned.responsible_id or settings.default_responsible_id}" for task, planned in rows}
+        if settings.parent_task_mode != "separate":
+            expected_keys.add(f"protocol:{protocol.id}:root")
+        if any(link.publication_key not in expected_keys for link in existing):
+            raise PublicationNotAllowedError("Состав исполнителей или режим изменён после публикации. Сначала сопоставьте существующие связи")
 
-        existing_by_task: dict[int, list[ProtocolTaskLink]] = {}
-        for link in existing:
-            existing_by_task.setdefault(link.protocol_task_id, []).append(link)
         links: list[ProtocolTaskLink] = []
-        warnings: list[str] = []
-        updated = 0
+        updated = reused = 0
         parent_ids: dict[int, str] = {}
-        root_id: str | None = None
-
+        planned_ids: dict[str, str] = {}
+        root_id = None
         if settings.parent_task_mode != "separate" and rows:
-            root_payload = self._root_payload(protocol, settings)
-            root_link = existing[0] if existing and update_existing else None
-            if root_link:
-                self.gateway.update_task(root_link.external_task_id, root_payload)
-                root_id = root_link.external_task_id
-                updated += 1
-            else:
-                external = self.gateway.create_task(root_payload)
-                root_id = str(external["id"])
-                root_link = self._add_link(rows[0][0].id, external)
-            links.append(root_link)
-
-        for protocol_task, planned in rows:
+            payload = self._root_payload(protocol, settings)
+            key = f"protocol:{protocol.id}:root"
+            link, was_reused = self._publish_one(protocol, rows[0][0].id, key, "protocol_root", payload, update_existing)
+            root_id = link.external_task_id
+            links.append(link)
+            reused += was_reused
+            updated += was_reused and update_existing
+        for task, planned in rows:
             responsible_id = planned.responsible_id or settings.default_responsible_id
-            if responsible_id is None and planned.original_assignee:
-                user = self.gateway.get_user(planned.original_assignee)
-                if user:
-                    responsible_id = int(user.get("ID") or user.get("id"))
-                    employee = self.db.scalar(
-                        select(Employee).where(Employee.full_name == planned.original_assignee)
-                    )
-                    if employee:
-                        employee.bitrix_user_id = responsible_id
-                        employee.is_available_in_bitrix = True
-                else:
-                    warnings.append(f"Исполнитель «{planned.original_assignee}» не найден в Bitrix24")
-            parent_id = parent_ids.get(protocol_task.parent_task_id) or root_id
-            payload = self._task_payload(protocol, protocol_task, planned, settings, responsible_id, parent_id)
-            candidates = existing_by_task.get(protocol_task.id, []) if update_existing else []
-            # The first link may represent the root, so do not reuse it as the instruction link.
-            link = next((item for item in candidates if item not in links), None)
-            if link:
-                self.gateway.update_task(link.external_task_id, payload)
-                link.last_synced_at = datetime.now(UTC)
-                links.append(link)
-                updated += 1
-                external_id = link.external_task_id
-            else:
-                external = self.gateway.create_task(payload)
-                link = self._add_link(protocol_task.id, external)
-                links.append(link)
-                external_id = str(external["id"])
-            parent_ids.setdefault(protocol_task.id, external_id)
-            if protocol_task.control is None:
-                self.db.add(ProtocolTaskControl(protocol_task=protocol_task, status="pending", planned_date=protocol_task.deadline))
+            if responsible_id is None:
+                raise PublicationNotAllowedError("Не сопоставлен исполнитель с ID пользователя Битрикс24")
+            parent_id = planned_ids.get(planned.parent_external_key) or parent_ids.get(task.parent_task_id) or root_id
+            payload = self._task_payload(protocol, task, planned, settings, responsible_id, parent_id)
+            key = f"protocol:{protocol.id}:task:{task.id}:{planned.task_type}:{responsible_id}"
+            kind = "task_root" if planned.task_type == "root" else "instruction"
+            link, was_reused = self._publish_one(protocol, task.id, key, kind, payload, update_existing)
+            links.append(link)
+            reused += was_reused
+            updated += was_reused and update_existing
+            planned_ids[planned.external_key] = link.external_task_id
+            parent_ids.setdefault(task.id, link.external_task_id)
+            if task.control is None:
+                self.db.add(ProtocolTaskControl(protocol_task=task, status="pending", planned_date=task.deadline))
         protocol.status = "published"
         self.db.commit()
-        return PublicationResult(links, warnings=tuple(dict.fromkeys(warnings)), updated_count=updated)
+        return PublicationResult(links, reused=reused == len(links) and not update_existing, updated_count=reused)
+
+    def _publish_one(self, protocol, task_id, key, kind, payload, update_existing):
+        link = self.db.scalar(select(ProtocolTaskLink).where(ProtocolTaskLink.publication_key == key))
+        if link:
+            if update_existing:
+                self.gateway.update_task(link.external_task_id, payload)
+                link.last_synced_at = datetime.now(UTC)
+                link.responsible_id = payload.get("responsible_id")
+                self.db.commit()
+            return link, True
+        operation = self.db.scalar(select(IntegrationOperation).where(IntegrationOperation.operation_key == key))
+        payload = {**payload, "xml_id": key}
+        external = None
+        if operation and operation.status in {"sending", "unknown", "done"}:
+            external = self.gateway.find_task_by_key(key)
+            if not external:
+                raise PublicationNotAllowedError(
+                    f"Неизвестен результат запроса {key}. Проверьте Битрикс24; повторное создание заблокировано"
+                )
+        if operation is None:
+            operation = IntegrationOperation(protocol_id=protocol.id, protocol_task_id=task_id,
+                operation_key=key, status="pending", link_kind=kind, payload=payload)
+            self.db.add(operation)
+            self.db.commit()
+        if external is None:
+            operation.status = "sending"
+            operation.payload = payload
+            self.db.commit()  # Durable intent before the external side effect.
+            try:
+                external = self.gateway.create_task(payload)
+            except Exception:
+                operation.status = "unknown"
+                operation.error = "Результат внешнего запроса неизвестен; требуется сверка"
+                self.db.commit()
+                raise
+        link = self._add_link(task_id, external)
+        link.publication_key = key
+        link.link_kind = kind
+        link.responsible_id = payload.get("responsible_id")
+        operation.status = "done"
+        operation.external_task_id = str(external["id"])
+        operation.error = None
+        self.db.commit()  # Each successful external write has a durable local link.
+        return link, False
 
     def _description(self, protocol: Protocol, task: Any, planned: Any, settings: PublicationSettings) -> str:
         section = self.db.get(ProtocolSection, task.section_id) if task.section_id else None
@@ -232,4 +283,4 @@ class PublicationService:
         ids = [task.id for task in protocol.tasks]
         if not ids:
             return []
-        return list(self.db.scalars(select(ProtocolTaskLink).where(ProtocolTaskLink.protocol_task_id.in_(ids)).order_by(ProtocolTaskLink.id)).all())
+        return list(self.db.scalars(select(ProtocolTaskLink).where(ProtocolTaskLink.protocol_task_id.in_(ids), ProtocolTaskLink.external_system == self.gateway.external_system).order_by(ProtocolTaskLink.id)).all())

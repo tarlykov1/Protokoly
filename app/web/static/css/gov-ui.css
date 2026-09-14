@@ -45,3 +45,10 @@ h1{font-size:28px;font-weight:650;line-height:1.25}h2{font-weight:650}
 .inline-editable{cursor:text;border-radius:4px;transition:background .15s,box-shadow .15s}.inline-editable:hover{background:#f5f8ff;box-shadow:0 0 0 2px #dce7ff}.inline-editing{background:#fff!important;box-shadow:none!important}.inline-document-control{font:inherit;color:inherit;max-width:100%;margin:0}.inline-saving{opacity:.65}.inline-saved{background:#eaf7ee!important}.inline-save-error{background:#fff0f0!important;box-shadow:0 0 0 2px #f1bcbc!important}.protocol-document-actions{max-width:980px;margin:0 auto;display:flex;justify-content:flex-end;gap:10px;padding:14px 0}.quick-full-edit-link{display:inline-block;margin-top:6px}.document-signatory{margin-bottom:16px}
 @media(max-width:1024px){.app-shell{grid-template-columns:1fr}.sidebar{top:auto;height:auto;border-right:0;border-bottom:1px solid var(--border)}.content{padding:18px}.protocol-paper{padding:28px 24px}}
 @media print{body{background:#fff}.topbar,.sidebar,.footer,.breadcrumbs,.app-action-bar,.panel,.protocol-tabs,.protocol-document-actions,.quick-full-edit-link{display:none!important}.app-shell{display:block}.content{padding:0;max-width:none}.protocol-paper{max-width:none;border:0;box-shadow:none;margin:0;padding:18mm 16mm}.inline-editable:hover{background:transparent;box-shadow:none}}
+
+/* Consistent contrast and form hierarchy across protocol views. */
+body { line-height: 1.45; }
+.form-label { font-weight: 600; color: #24374d; }
+.muted, .text-muted { color: #53697f !important; }
+.accordion-button { font-weight: 600; color: #24374d; }
+.task-title, .task-description { color: #172b43; }

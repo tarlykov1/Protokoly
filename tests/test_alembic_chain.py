@@ -34,5 +34,6 @@ def test_alembic_revisions_form_single_ordered_chain():
         "0020_protocol_document_fields",
         "0021_employee_fio_aliases",
         "0022_document_snapshots",
+        "0023_reliable_integration",
     ]
     assert len(scripts.get_heads()) == 1

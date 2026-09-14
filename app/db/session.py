@@ -14,5 +14,8 @@ def get_db() -> Generator[Session, None, None]:
         try:
             yield session
         finally:
+            locks = session.info.pop("request_locks", None)
+            if locks:
+                locks.close()
             for client in session.info.pop("owned_http_clients", []):
                 client.close()

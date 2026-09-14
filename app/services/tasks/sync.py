@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models.domain import Protocol, ProtocolTaskControl, ProtocolTaskLink
+from app.db.models.domain import Employee, Protocol, ProtocolTaskControl, ProtocolTaskLink
 from app.services.tasks.gateway import TaskGateway
 
 
@@ -42,6 +42,21 @@ class BitrixTaskSyncService:
                     raise ValueError("задача не найдена")
                 raw_status = str(remote.get("status", "")).lower()
                 status = self.STATUS_MAP.get(raw_status, "pending")
+                link.remote_snapshot = remote
+                link.last_synced_at = now
+                link.external_status = raw_status
+                task = link.protocol_task
+                employee_ids = {a.employee_id for a in task.assignments if a.employee_id}
+                primary_id = task.primary_employee_id or (next(iter(employee_ids)) if len(employee_ids) == 1 else None)
+                employee = self.db.get(Employee, primary_id) if primary_id else None
+                relevant = [item for item in links if item.protocol_task_id == task.id and item.link_kind != "protocol_root" and item.link_kind != "task_root"]
+                if link.link_kind in {"protocol_root", "task_root"}:
+                    continue
+                if link.link_kind == "legacy":
+                    if len(relevant) != 1:
+                        raise ValueError("Старые связи неоднозначны; требуется сопоставление главного ответственного")
+                elif not employee or link.responsible_id != employee.bitrix_user_id:
+                    continue
                 control = link.protocol_task.control
                 if control is None:
                     control = ProtocolTaskControl(protocol_task=link.protocol_task)
@@ -52,6 +67,8 @@ class BitrixTaskSyncService:
                 closed = self._date(remote.get("closed_date") or remote.get("closeddate"))
                 if status == "completed":
                     control.actual_date = closed or date.today()
+                else:
+                    control.actual_date = None
                 control.result_comment = remote.get("result") or remote.get("result_comment") or control.result_comment
                 control.last_synced_at = link.last_synced_at = now
                 link.external_status = raw_status

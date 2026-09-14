@@ -17,3 +17,5 @@ logs/
 var/
 demo/
 node_modules/
+
+.local/

@@ -7,7 +7,7 @@
   {% if demo_mode %}<p class="muted">Это тестовый шлюз: реальные задачи в Bitrix24 не создаются.</p>{% endif %}
   <h1>{{ protocol.number or protocol.title }}</h1>
   {% if links %}
-    <div class="alert alert-success"><strong>Опубликовано</strong><br>Создано задач: {{ links|length }}</div>
+    <div class="alert alert-success"><strong>{{ "Опубликовано" if protocol.status == "published" else "Публикация не завершена" }}</strong><br>Создано задач: {{ links|length }}</div>
     <div class="d-grid gap-2">
       {% for link in links %}
         <a href="{{ link.external_task_url }}" class="card-app p-3" target="_blank" rel="noreferrer">
@@ -15,7 +15,7 @@
         </a>
       {% endfor %}
     </div>
-    <form class="mt-3" method="post" action="/protocols/{{ protocol.id }}/publish"><input type="hidden" name="update_existing" value="true"><button class="btn btn-outline-primary">Обновить задачи</button></form>
+    <form class="mt-3" method="post" action="/protocols/{{ protocol.id }}/publish"><input type="hidden" name="update_existing" value="{{ 'true' if protocol.status == 'published' else 'false' }}"><button class="btn btn-outline-primary">{{ "Обновить задачи" if protocol.status == "published" else "Продолжить публикацию" }}</button></form>
   {% else %}
     <h2 class="h4 mt-4">Предварительная проверка</h2>
     <p class="metric-value">{{ preview.task_count }} задач</p>
@@ -32,7 +32,7 @@
       <div class="col-md-8"><label class="form-label">Название корневой задачи</label><input class="form-control" name="root_task_title" value="{{ settings.root_task_title or '' }}"></div>
       <div class="col-md-6"><label class="form-label">Соисполнители (ID через запятую)</label><input class="form-control" name="accomplices" value="{{ settings.accomplices|join(',') }}"></div>
       <div class="col-md-6"><label class="form-label">Наблюдатели (ID через запятую)</label><input class="form-control" name="observers" value="{{ settings.observers|join(',') }}"></div>
-      {% for name,label,checked in [('create_checklist','Создать чек-лист',settings.create_checklist),('add_protocol_link','Добавить ссылку',settings.add_protocol_link),('sync_enabled','Включить синхронизацию',settings.sync_enabled)] %}<div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="{{ name }}" value="true" {% if checked %}checked{% endif %}><label class="form-check-label">{{ label }}</label></div>{% endfor %}
+      {% for name,label,checked in [('add_protocol_link','Добавить ссылку',settings.add_protocol_link),('sync_enabled','Включить синхронизацию',settings.sync_enabled)] %}<div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="{{ name }}" value="true" {% if checked %}checked{% endif %}><label class="form-check-label">{{ label }}</label></div>{% endfor %}
       <div><button class="btn btn-primary">Сохранить настройки</button></div>
     </form>
     <div class="row g-3">
@@ -54,5 +54,5 @@
       {% if protocol.status != 'approved' %}<span class="muted ms-2">Сначала утвердите протокол</span>{% endif %}
     </form>
   {% endif %}
-</section>
+<p class="mt-3"><a href="/integration-jobs">Открыть журнал фоновых операций</a> · <a href="/protocols/{{ protocol.id }}/integration-links">Сопоставить старые связи</a></p></section>
 {% endblock %}

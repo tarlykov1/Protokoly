@@ -1,15 +1,75 @@
+name: protokoly
+x-app: &app
+  build: .
+  image: protokoly:local
+  environment: &environment
+    ENVIRONMENT: desktop
+    DEMO_MODE: "false"
+    DATABASE_PASSWORD_FILE: /run/secrets/database_password
+    SECRETS_KEY_FILE: /run/secrets/encryption_key
+    LOCAL_PASSWORD_FILE: /run/secrets/local_password
+    BITRIX_ACCESS_ENABLED: "true"
+    BACKGROUND_JOBS_ENABLED: "true"
+    ALLOWED_HOSTS: localhost,127.0.0.1,web
+  secrets:
+    - database_password
+    - encryption_key
+    - local_password
+  volumes:
+    - app_data:/app/var
+  init: true
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
 services:
   db:
-    image: postgres:16
+    image: postgres:16.10-bookworm
     environment:
-      POSTGRES_DB: protocols
       POSTGRES_USER: protocols
-      POSTGRES_PASSWORD: protocols
-    ports: ["5432:5432"]
+      POSTGRES_DB: protocols
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+    secrets:
+      - database_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U protocols -d protocols"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  migrate:
+    <<: *app
+    command: [python, -m, scripts.bootstrap]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
   web:
-    build: .
-    environment:
-      DATABASE_URL: postgresql+psycopg://protocols:protocols@db:5432/protocols
-      AI_ENABLED: "false"
-    ports: ["8000:8000"]
-    depends_on: [db]
+    <<: *app
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  worker:
+    <<: *app
+    command: [python, -m, app.services.tasks.jobs]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+volumes:
+  postgres_data:
+  app_data:
+secrets:
+  database_password:
+    file: ./.local/secrets/database_password
+  encryption_key:
+    file: ./.local/secrets/encryption_key
+  local_password:
+    file: ./.local/secrets/local_password

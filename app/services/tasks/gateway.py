@@ -33,6 +33,9 @@ class TaskGateway(ABC):
     @abstractmethod
     def add_comment(self, task_id: str, comment: str) -> dict[str, Any]: ...
 
+    def find_task_by_key(self, key: str) -> dict[str, Any] | None:
+        return None
+
     def get_status(self, task_id: str) -> str | None:
         task = self.get_task(task_id)
         return str(task.get("status")) if task else None
@@ -59,6 +62,10 @@ class FakeBitrixGateway(TaskGateway):
         }
         self._tasks[task_id] = task
         return dict(task)
+
+    def find_task_by_key(self, key: str) -> dict[str, Any] | None:
+        matches = [task for task in self._tasks.values() if task.get("xml_id") == key]
+        return dict(matches[0]) if len(matches) == 1 else None
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         task = self._tasks.get(str(task_id))
@@ -112,7 +119,24 @@ class Bitrix24RestGateway(TaskGateway):
             )
         raise BitrixAPIError("Не заполнен URL вебхука Bitrix24")
 
-    def _call(
+    def _call(self, method, payload=None, *, full_response=False):
+        from app.core.config import get_settings
+        from app.core.locks import OperationBusy, operation_lock
+        for _ in range(100):
+            for slot in range(get_settings().bitrix_parallel_requests):
+                lock = operation_lock(self.db, f"bitrix-rest-slot:{slot}")
+                try:
+                    lock.__enter__()
+                except OperationBusy:
+                    continue
+                try:
+                    return self._call_unlocked(method, payload, full_response=full_response)
+                finally:
+                    lock.__exit__(None, None, None)
+            time.sleep(0.1)
+        raise BitrixAPIError("Лимит параллельных запросов Битрикс24. Повторите позже")
+
+    def _call_unlocked(
         self, method: str, payload: dict[str, Any] | None = None, *, full_response: bool = False
     ) -> Any:
         payload = payload or {}
@@ -145,7 +169,6 @@ class Bitrix24RestGateway(TaskGateway):
                     raise BitrixAPIError(body.get("error_description") or body["error"])
                 log.response = sanitize_payload(body)
                 log.status = "success"
-                self.db.commit()
                 return body if full_response else body.get("result")
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 cause = exc
@@ -165,7 +188,6 @@ class Bitrix24RestGateway(TaskGateway):
             else:
                 log.response = sanitize_payload({"error": str(error)})
                 log.status = "error"
-                self.db.commit()
                 raise error from cause
 
     def check_connection(self) -> dict[str, Any]:
@@ -212,6 +234,7 @@ class Bitrix24RestGateway(TaskGateway):
             "accomplices": "ACCOMPLICES",
             "auditors": "AUDITORS",
             "parent_id": "PARENT_ID",
+            "xml_id": "XML_ID",
         }
         fields = {
             target: task_data[source]
@@ -241,6 +264,14 @@ class Bitrix24RestGateway(TaskGateway):
             "status": task.get("status", "created"),
         }
 
+    def find_task_by_key(self, key: str) -> dict[str, Any] | None:
+        result = self._call("tasks.task.list", {"filter": {"=XML_ID": key}, "select": ["ID", "XML_ID", "STATUS"]}) or {}
+        matches = [task for task in result.get("tasks", []) if task.get("xmlId", task.get("XML_ID")) == key]
+        if len(matches) != 1:
+            return None
+        task = matches[0]
+        return {"id": str(task.get("id") or task["ID"]), "status": task.get("status")}
+
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         result = self._call("tasks.task.get", {"taskId": task_id}) or {}
         task = result.get("task", result) or None
@@ -261,6 +292,7 @@ class Bitrix24RestGateway(TaskGateway):
             "accomplices": "ACCOMPLICES",
             "auditors": "AUDITORS",
             "parent_id": "PARENT_ID",
+            "xml_id": "XML_ID",
         }
         fields = {mapping[key]: value for key, value in data.items() if key in mapping}
         fields.update(
@@ -277,7 +309,7 @@ class Bitrix24RestGateway(TaskGateway):
         if name is None:
             return self.check_connection()
         users = self._call("user.search", {"FILTER": {"NAME": name}}) or []
-        return dict(users[0]) if users else None
+        return dict(users[0]) if len(users) == 1 else None
 
     def add_comment(self, task_id: str, comment: str) -> dict[str, Any]:
         result = self._call(
