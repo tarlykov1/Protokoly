@@ -12,3 +12,8 @@ uploads/
 logs/
 
 .idea/
+
+# Runtime imports, generated demos, and report files
+var/
+demo/
+node_modules/

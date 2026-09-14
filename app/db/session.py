@@ -11,4 +11,8 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 def get_db() -> Generator[Session, None, None]:
     with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            for client in session.info.pop("owned_http_clients", []):
+                client.close()

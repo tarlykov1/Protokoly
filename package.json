@@ -1,0 +1,10 @@
+{
+  "name": "protokoly-ui-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/js/*.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "30.0.1"
+  }
+}

@@ -92,7 +92,11 @@ class Bitrix24RestGateway(TaskGateway):
     ):
         self.settings = settings
         self.db = db
-        self.client = client or httpx.Client(timeout=15)
+        self.client = client or httpx.Client(
+            timeout=15, limits=httpx.Limits(max_connections=5, max_keepalive_connections=2)
+        )
+        if client is None:
+            db.info.setdefault("owned_http_clients", []).append(self.client)
 
     def _base_url(self) -> str:
         if self.settings.webhook_url:
@@ -108,23 +112,41 @@ class Bitrix24RestGateway(TaskGateway):
             )
         raise BitrixAPIError("Не заполнен URL вебхука Bitrix24")
 
-    def _call(self, method: str, payload: dict[str, Any] | None = None) -> Any:
+    def _call(
+        self, method: str, payload: dict[str, Any] | None = None, *, full_response: bool = False
+    ) -> Any:
         payload = payload or {}
-        log = IntegrationLog(operation=method, request=sanitize_payload(payload), status="pending", request_id=get_request_id())
+        log = IntegrationLog(
+            operation=method,
+            request=sanitize_payload(payload),
+            status="pending",
+            request_id=get_request_id(),
+        )
         self.db.add(log)
-        for attempt in range(1, 4):
+        # Never blindly retry writes: a timeout can arrive after Bitrix committed.
+        read_methods = {
+            "user.current",
+            "user.get",
+            "user.search",
+            "sonet_group.get",
+            "tasks.task.get",
+        }
+        max_attempts = 3 if method in read_methods else 1
+        for attempt in range(1, max_attempts + 1):
             log.attempts = attempt
             cause = None
             try:
                 response = self.client.post(f"{self._base_url()}/{method}.json", json=payload)
                 response.raise_for_status()
                 body = response.json()
+                if not isinstance(body, dict):
+                    raise BitrixAPIError("Некорректный ответ Bitrix24")
                 if body.get("error"):
                     raise BitrixAPIError(body.get("error_description") or body["error"])
                 log.response = sanitize_payload(body)
                 log.status = "success"
                 self.db.commit()
-                return body.get("result")
+                return body if full_response else body.get("result")
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 cause = exc
                 retryable, error = True, BitrixAPIError("Bitrix24 временно недоступен")
@@ -132,10 +154,13 @@ class Bitrix24RestGateway(TaskGateway):
                 cause = exc
                 retryable = exc.response.status_code in {429, 502, 503, 504}
                 error = BitrixAPIError(f"Bitrix24 вернул HTTP {exc.response.status_code}")
+            except ValueError as exc:
+                cause = exc
+                retryable, error = False, BitrixAPIError("Некорректный JSON в ответе Bitrix24")
             except BitrixAPIError as exc:
                 cause = exc
                 retryable, error = False, exc
-            if retryable and attempt < 3:
+            if retryable and attempt < max_attempts:
                 time.sleep((0.5, 1.0, 2.0)[attempt - 1])
             else:
                 log.response = sanitize_payload({"error": str(error)})
@@ -147,12 +172,30 @@ class Bitrix24RestGateway(TaskGateway):
         result = self._call("user.current")
         return dict(result or {})
 
+    def _list_all(self, method: str, payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        payload = dict(payload or {})
+        items = []
+        seen = set()
+        while True:
+            body = self._call(method, payload, full_response=True)
+            page = body.get("result") or []
+            if not isinstance(page, list):
+                raise BitrixAPIError("Некорректный список в ответе Bitrix24")
+            items.extend(dict(item) for item in page)
+            next_start = body.get("next")
+            if next_start is None:
+                return items
+            if str(next_start) in seen or len(seen) >= 10000:
+                raise BitrixAPIError("Bitrix24 повторяет страницу списка")
+            seen.add(str(next_start))
+            payload["start"] = next_start
+
     def list_users(self) -> list[dict[str, Any]]:
-        return [dict(user) for user in (self._call("user.get") or [])]
+        return self._list_all("user.get")
 
     def list_projects(self, query: str | None = None) -> list[dict[str, Any]]:
         payload = {"FILTER": {"%NAME": query}} if query else {}
-        result = self._call("sonet_group.get", payload) or []
+        result = self._list_all("sonet_group.get", payload)
         return [
             {"id": str(item.get("ID") or item.get("id")), "name": item.get("NAME") or ""}
             for item in result
@@ -176,11 +219,20 @@ class Bitrix24RestGateway(TaskGateway):
             if task_data.get(source) not in (None, "", [])
         }
         fields.update(
-            {key: value for key, value in task_data.get("custom_fields", {}).items() if key.startswith("UF_")}
+            {
+                key: value
+                for key, value in task_data.get("custom_fields", {}).items()
+                if key.startswith("UF_")
+            }
         )
         result = self._call("tasks.task.add", {"fields": fields}) or {}
         task = result.get("task", result)
-        task_id = str(task.get("id") or task.get("ID"))
+        task_id = task.get("id") or task.get("ID")
+        if not task_id:
+            raise BitrixAPIError(
+                "Bitrix24 не вернул ID созданной задачи; проверьте портал перед повтором"
+            )
+        task_id = str(task_id)
         return {
             "id": task_id,
             "url": f"{self.settings.portal_url.rstrip('/')}/company/personal/user/0/tasks/task/view/{task_id}/"
@@ -199,8 +251,25 @@ class Bitrix24RestGateway(TaskGateway):
         return normalized
 
     def update_task(self, task_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        mapping = {"title": "TITLE", "description": "DESCRIPTION", "responsible_id": "RESPONSIBLE_ID", "created_by": "CREATED_BY", "deadline": "DEADLINE", "group_id": "GROUP_ID", "accomplices": "ACCOMPLICES", "auditors": "AUDITORS", "parent_id": "PARENT_ID"}
-        fields = {mapping.get(key, key): value for key, value in data.items()}
+        mapping = {
+            "title": "TITLE",
+            "description": "DESCRIPTION",
+            "responsible_id": "RESPONSIBLE_ID",
+            "created_by": "CREATED_BY",
+            "deadline": "DEADLINE",
+            "group_id": "GROUP_ID",
+            "accomplices": "ACCOMPLICES",
+            "auditors": "AUDITORS",
+            "parent_id": "PARENT_ID",
+        }
+        fields = {mapping[key]: value for key, value in data.items() if key in mapping}
+        fields.update(
+            {
+                key: value
+                for key, value in data.get("custom_fields", {}).items()
+                if key.startswith("UF_")
+            }
+        )
         result = self._call("tasks.task.update", {"taskId": task_id, "fields": fields})
         return {"id": str(task_id), "result": result}
 

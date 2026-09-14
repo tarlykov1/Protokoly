@@ -26,6 +26,7 @@ document.addEventListener('click',(e)=>{const t=e.target.closest('[data-toggle-s
     return result;
   };
 
+  const isUserText = node => node.parentElement?.closest('.protocol-document,input,textarea,[contenteditable]');
   const localizeElement = root => {
     root.querySelectorAll('option').forEach(option => {
       const key = option.textContent.trim();
@@ -34,7 +35,7 @@ document.addEventListener('click',(e)=>{const t=e.target.closest('[data-toggle-s
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         const parent = node.parentElement;
-        if (!parent || ['SCRIPT','STYLE','CODE','PRE'].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
+        if (isUserText(node) || !parent || ['SCRIPT','STYLE','CODE','PRE'].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       }
     });
@@ -49,7 +50,7 @@ document.addEventListener('click',(e)=>{const t=e.target.closest('[data-toggle-s
   document.addEventListener('DOMContentLoaded', () => localizeElement(document.body));
   const observer = new MutationObserver(records => records.forEach(record => record.addedNodes.forEach(node => {
     if (node.nodeType === Node.ELEMENT_NODE) localizeElement(node);
-    else if (node.nodeType === Node.TEXT_NODE && node.parentElement) {
+    else if (node.nodeType === Node.TEXT_NODE && node.parentElement && !isUserText(node)) {
       const next = replaceText(node.nodeValue);
       if (next !== node.nodeValue) node.nodeValue = next;
     }

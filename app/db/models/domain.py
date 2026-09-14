@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     Time,
@@ -269,6 +270,7 @@ class ProtocolDocumentVersion(Base):
     version: Mapped[int] = mapped_column(Integer())
     user: Mapped[str] = mapped_column(String(255))
     file_url: Mapped[str] = mapped_column(String(1000))
+    content: Mapped[bytes | None] = mapped_column(LargeBinary(), deferred=True)
     exported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

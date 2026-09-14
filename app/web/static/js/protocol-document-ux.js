@@ -41,6 +41,8 @@
     });
   };
 
+  document.addEventListener('protocol:renumber', renumberEditorTasks);
+
   if (editor) {
     let renumberTimer;
     const queueRenumber = () => { clearTimeout(renumberTimer); renumberTimer = setTimeout(renumberEditorTasks, 0); };
@@ -61,15 +63,19 @@
     return ['—', 'Организация не указана', 'Название мероприятия не указано', 'Дата не указана', 'Время не указано', 'ФИО не указано', 'Должность не указана'].includes(value) ? '' : value;
   };
 
+  let saveQueue = Promise.resolve();
+  let saveFailed = false;
   const requestSave = async payload => {
     const response = await fetch(`/protocols/${protocolId}/editor/save`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+      method: 'POST', headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, body: JSON.stringify({...payload, version: Number(documentRoot.dataset.version)})
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       throw new Error(body.detail || 'Не удалось сохранить изменение');
     }
-    return response.json();
+    const result = await response.json();
+    documentRoot.dataset.version = result.version;
+    return result;
   };
 
   const flash = (element, ok) => {
@@ -101,7 +107,7 @@
   };
 
   const beginEdit = element => {
-    if (element.dataset.editing === '1') return;
+    if (element.dataset.editing === '1' || element.classList.contains('inline-saving')) return;
     element.dataset.editing = '1';
     const originalHtml = element.innerHTML;
     const originalText = normalizeDisplayedValue(element);
@@ -113,26 +119,21 @@
     const cancel = () => { cancelled = true; element.innerHTML = originalHtml; element.classList.remove('inline-editing'); delete element.dataset.editing; };
     const commit = async () => {
       if (cancelled) return;
+      if (!control.checkValidity()) { control.reportValidity(); control.focus(); control.addEventListener('blur', commit, {once: true}); return; }
       const value = control.value.trim();
+      if (value === (element.dataset.pendingValue ?? originalText)) { cancel(); return; }
       element.classList.add('inline-saving');
+      const performSave = async () => {
       try {
+        if (saveFailed) throw new Error('Предыдущее сохранение не выполнено. Скопируйте изменения и обновите страницу.');
         if (element.dataset.protocolField) {
           await requestSave({protocol: {[element.dataset.protocolField]: value}});
         } else if (element.dataset.inlineField) {
           const task = element.closest('.document-task');
           await requestSave({tasks: [{id: Number(task.dataset.taskId), [element.dataset.inlineField]: value}]});
         } else if (element.dataset.signatoryField) {
-          const rows = [...document.querySelectorAll('.document-signatory')];
-          const signatories = rows.map(row => ({
-            role: row.querySelector('[data-signatory-field="role"]')?.dataset.pendingValue ?? normalizeDisplayedValue(row.querySelector('[data-signatory-field="role"]')),
-            name_snapshot: row.querySelector('[data-signatory-field="name_snapshot"]')?.dataset.pendingValue ?? normalizeDisplayedValue(row.querySelector('[data-signatory-field="name_snapshot"]')),
-            position_snapshot: row.querySelector('[data-signatory-field="position_snapshot"]')?.dataset.pendingValue ?? normalizeDisplayedValue(row.querySelector('[data-signatory-field="position_snapshot"]')),
-            sort_order: Number(row.dataset.signatoryIndex || 0)
-          }));
           const row = element.closest('.document-signatory');
-          const index = Number(row.dataset.signatoryIndex || 0);
-          signatories[index][element.dataset.signatoryField] = value;
-          await requestSave({signatories});
+          await requestSave({signatory_updates: [{id: Number(row.dataset.signatoryId), [element.dataset.signatoryField]: value}]});
         }
         const kind = element.dataset.editKind;
         if (kind === 'select') {
@@ -143,9 +144,13 @@
         element.dataset.pendingValue = value;
         element.classList.remove('inline-editing'); delete element.dataset.editing; flash(element, true);
       } catch (error) {
-        element.innerHTML = originalHtml; element.classList.remove('inline-editing'); delete element.dataset.editing; flash(element, false);
+        saveFailed = true;
+        element.textContent = value || '—'; element.classList.remove('inline-editing'); delete element.dataset.editing; flash(element, false);
         window.alert(error.message);
       }
+      };
+      saveQueue = saveQueue.then(performSave);
+      await saveQueue;
     };
     control.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); cancel(); }
@@ -163,10 +168,28 @@
     element.addEventListener('dblclick', event => { event.preventDefault(); beginEdit(element); });
   });
 
-  document.querySelector('[data-protocol-print]')?.addEventListener('click', () => window.print());
-  document.querySelector('[data-protocol-pdf]')?.addEventListener('click', () => {
-    document.body.classList.add('pdf-print-mode');
-    window.print();
-    setTimeout(() => document.body.classList.remove('pdf-print-mode'), 500);
+  const finishEditing = async () => {
+    documentRoot.querySelectorAll('.inline-document-control').forEach(control => control.blur());
+    await saveQueue;
+    if (saveFailed || documentRoot.querySelector('.inline-document-control')) {
+      window.alert('Сначала сохраните изменения документа.');
+      return false;
+    }
+    return true;
+  };
+  document.querySelector('[data-protocol-print]')?.addEventListener('click', async () => {
+    if (await finishEditing()) window.print();
+  });
+  document.querySelector('[data-protocol-pdf]')?.addEventListener('click', async () => {
+    if (await finishEditing()) window.print();
+  });
+  document.querySelectorAll('a[href*="/export/docx"]').forEach(link => link.addEventListener('click', async event => {
+    event.preventDefault();
+    if (await finishEditing()) window.location.assign(link.href);
+  }));
+  window.addEventListener('beforeunload', event => {
+    if (saveFailed || documentRoot.querySelector('.inline-saving,.inline-document-control')) {
+      event.preventDefault(); event.returnValue = '';
+    }
   });
 })();

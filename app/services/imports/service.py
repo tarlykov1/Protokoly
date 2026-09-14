@@ -61,6 +61,10 @@ def _validate_upload(file: UploadFile, data: bytes) -> None:
         raise HTTPException(400, "DOCX ZIP signature is invalid")
     try:
         with ZipFile(__import__("io").BytesIO(data)) as zf:
+            if len(zf.infolist()) > 2000 or sum(info.file_size for info in zf.infolist()) > 50 * 1024 * 1024:
+                raise HTTPException(413, "Распакованный DOCX слишком большой")
+            if any(info.flag_bits & 1 for info in zf.infolist()):
+                raise HTTPException(400, "Зашифрованный DOCX не поддерживается")
             if "word/document.xml" not in zf.namelist():
                 raise HTTPException(400, "DOCX payload is invalid")
     except BadZipFile as exc:
@@ -287,7 +291,7 @@ def parse_file(db: Session, session: ImportSession, parser_type: str | None = No
 def create_preview_session(
     db: Session, project_id: int, file: UploadFile, parser_type: str | None = None
 ) -> ImportSession:
-    data = file.file.read()
+    data = file.file.read(MAX_IMPORT_SIZE + 1)
     _validate_upload(file, data)
     checksum = hashlib.sha256(data).hexdigest()
     stored = f"{uuid.uuid4().hex}.docx"

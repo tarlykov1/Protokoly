@@ -23,13 +23,14 @@ def mask_secret(value: Any) -> str:
 def _safe_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
+        port = parsed.port
     except ValueError:
         return REDACTED
     if not parsed.scheme or not parsed.netloc:
         return value
     host = parsed.hostname or ""
-    if parsed.port:
-        host += f":{parsed.port}"
+    if port:
+        host += f":{port}"
     # Bitrix incoming webhook paths contain both a user id and a token.
     path = "/rest/***" if "/rest/" in parsed.path.lower() else parsed.path
     return urlunsplit((parsed.scheme, host, path, "", ""))
