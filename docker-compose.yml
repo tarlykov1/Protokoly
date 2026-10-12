@@ -4,11 +4,11 @@ x-app: &app
   image: protokoly:local
   environment: &environment
     ENVIRONMENT: desktop
-    DEMO_MODE: "false"
+    DEMO_MODE: "true"
     DATABASE_PASSWORD_FILE: /run/secrets/database_password
     SECRETS_KEY_FILE: /run/secrets/encryption_key
     LOCAL_PASSWORD_FILE: /run/secrets/local_password
-    BITRIX_ACCESS_ENABLED: "true"
+    BITRIX_ACCESS_ENABLED: "false"
     BACKGROUND_JOBS_ENABLED: "true"
     ALLOWED_HOSTS: localhost,127.0.0.1,web
   secrets:
