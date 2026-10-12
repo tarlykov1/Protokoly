@@ -120,8 +120,8 @@ async def controlled_http_error(request: Request, exc: StarletteHTTPException):
     if "application/json" in (request.headers.get("accept", "") + request.headers.get("content-type", "")) or request.url.path.startswith(
         ("/ready", "/system/diagnostics")
     ):
-        return JSONResponse(payload, status_code=exc.status_code)
-    return templates.TemplateResponse(request, "error.html", payload, status_code=exc.status_code)
+        return JSONResponse(payload, status_code=exc.status_code, headers=exc.headers)
+    return templates.TemplateResponse(request, "error.html", payload, status_code=exc.status_code, headers=exc.headers)
 
 
 def readiness_percent(protocol):
