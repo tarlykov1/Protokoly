@@ -1,0 +1,10 @@
+/* Controller dashboard v3.12: filter layout fix. Included in dashboard.html */
+nav > select, nav > input, nav > button {min-width:0;max-width:100%;}
+nav #assignee {width:260px;flex:0 1 260px;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;}
+nav #type {width:180px;flex:0 0 180px;}
+nav #range {width:140px;flex:0 0 140px;}
+nav #group {width:230px;flex:0 1 230px;}
+nav #event {width:260px;flex:1 1 220px;max-width:360px;}
+nav #period {width:185px;flex:0 1 185px;}
+nav #search {width:260px;flex:1 1 220px;max-width:340px;}
+@media(max-width:650px){nav #assignee,nav #type,nav #range,nav #group,nav #event,nav #period,nav #search{flex:1 1 180px;width:auto;max-width:100%;}}
