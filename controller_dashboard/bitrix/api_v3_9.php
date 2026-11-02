@@ -56,6 +56,21 @@ if ($path === 'protocol-start') {
     }
     $reply = $client->get($backend.'/items');
     $status = (int)$client->getStatus();
+
+    // Invalidate a session-bound report only on this exact ACL-scope error.
+    // Never bypass the backend access check; restart from the authorized scope.
+    $scopeError = false;
+    if ($status === 403 && $rid !== '') {
+        $payload = json_decode((string)$reply, true);
+        $scopeError = is_array($payload)
+            && ($payload['detail'] ?? '') === 'Protocol report is outside authorized scope';
+    }
+    if ($scopeError) {
+        unset($_SESSION['controller_dashboard_protocol_report']);
+        $client->setHeader('X-Protocol-Report', '');
+        $reply = $client->get($backend.'/items');
+        $status = (int)$client->getStatus();
+    }
 }
 if ($status <= 0) {
     http_response_code(502); echo json_encode(['detail'=>'Python backend unreachable']); exit;
