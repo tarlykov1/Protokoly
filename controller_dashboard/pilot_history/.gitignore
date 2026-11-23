@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.env
+*.env.*
+*.bak.*
+*.log

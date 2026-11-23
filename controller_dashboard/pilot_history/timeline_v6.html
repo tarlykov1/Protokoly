@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>История поручений – полная хронология</title>
+  <link rel="stylesheet" href="./timeline_v6.css">
+  <script defer src="./timeline_v6.js"></script>
+</head>
+<body>
+ <main class="page">
+  <header class="header"><div><div class="eyebrow">ТЕСТОВЫЙ КОНТУР · БИТРИКС24</div><h1>История поручений</h1><p class="muted">События из сохранённой базы пилотного кабинета контролёра</p></div><a class="back" href="/controller-pilot-test/">← Назад к тестовому кабинету</a> <a class="back" href="/controller-pilot-test/overview/">Тестовая сводка контролёра</a></header>
+  <section class="panel form-panel" aria-label="Загрузка истории">
+   <div class="form-grid"><label>Токен тестового API<input type="password" id="token" autocomplete="off" placeholder="Вставьте токен"></label><label>ID задачи<input type="number" min="1" id="task" value="100193"></label><button id="load" class="btn-primary" type="button">Показать историю</button></div>
+   <div class="action-line"><span id="message" role="status">Для загрузки истории введите токен.</span><span class="muted">Синхронизация с Битрикс24 не выполняется автоматически</span></div>
+  </section>
+  <section id="result" hidden>
+   <div class="stats"><div class="stat"><div class="stat-number" id="n-events">—</div><div class="stat-label">Событий в базе</div></div><div class="stat"><div class="stat-number" id="n-fields">—</div><div class="stat-label">Типов изменений</div></div><div class="stat"><div class="stat-number" id="n-actors">—</div><div class="stat-label">Авторов (ID)</div></div><div class="stat"><div class="stat-number" id="n-deadlines">—</div><div class="stat-label">Изменений срока</div></div></div>
+   <section class="panel change-panel"><div class="section-heading"><h2>Переносы крайнего срока</h2><span id="deadline-count" class="subtle"></span></div><div id="deadlines" class="deadline-list"></div></section>
+   <section class="panel" id="comments-panel" aria-label="Комментарии из Битрикс24">
+    <div class="section-heading"><div><h2>Комментарии задачи</h2><p class="muted">Два независимых источника: архив прежней карточки и чат новой. Запрашиваются только по кнопке.</p></div><span id="comments-count" class="subtle">Не загружены</span></div>
+    <div class="comment-actions">
+      <button class="btn-primary" type="button" id="comments-load">Прочитать комментарии (без записи)</button>
+      <button class="btn-secondary" type="button" id="comments-save">Сохранить снимки в SQLite</button>
+    </div>
+    <p id="comments-note" class="muted" role="status">Сохранённая хронология останется без изменений.</p>
+    <div id="comments-list" class="comment-list"></div>
+    <div class="archive-heading"><h3>Сохранённые снимки комментариев</h3><span id="archive-count" class="subtle">Архив ещё не загружен</span></div>
+    <p id="archive-note" class="muted" role="status">Здесь появятся ранее сохранённые редакции с датой фиксации.</p>
+    <div id="archive-list" class="comment-list"></div>
+   </section>
+   <section class="panel"><div class="section-heading"><div><h2>Хронология</h2><p class="muted">Исторические события и снимки комментариев объединены по времени. Первые снимки связанных комментариев встроены в события без повторения; отдельные фиксации и редакции остаются видны.</p></div><span id="visible-count" class="subtle"></span></div>
+    <div class="filters"><label>Тип события<select id="type-filter"><option value="">Все события</option></select></label><label>Автор<select id="actor-filter"><option value="">Все авторы</option></select></label><label>Период с<input type="date" id="from-filter"></label><label>по<input type="date" id="to-filter"></label><label>Поиск<input type="search" id="search" placeholder="По значениям и деталям"></label><label>Порядок<select id="sort"><option value="desc">Сначала новые</option><option value="asc">Сначала старые</option></select></label></div>
+    <div class="timeline" id="timeline" aria-live="polite"></div>
+   </section>
+   <section class="panel footnote"><strong>Ограничение данных:</strong> эта хронология показывает только события, собранные тестовым механизмом. Отсутствующие старые значения, удалённые комментарии или авторы не восстанавливаются предположениями. <a id="diagnostics" href="#">Показать диагностику</a><pre id="diagnostics-output" hidden></pre></section>
+  </section>
+ </main>
+</body>
+</html>

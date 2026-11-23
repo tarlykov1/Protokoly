@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Кабинет контролёра · пилот</title>
+<link rel="stylesheet" href="/controller-pilot-test/overview/overview_v67.css">
+<script defer src="/controller-pilot-test/overview/overview_v67.js"></script>
+</head>
+<body>
+<header class="topbar"><div class="shell topinner"><div class="brand"><span class="mark">К</span><div><small>БИТРИКС24 · ТЕСТОВЫЙ КОНТУР</small><strong>Кабинет контролёра</strong></div></div><nav><a href="/controller-pilot-test/">Тестовый кабинет</a><a href="/controller-pilot-test/timeline/">История поручений</a></nav></div></header>
+<main class="shell">
+<div class="hero"><div><p class="eyebrow">ПИЛОТ / СВОДНАЯ ПАНЕЛЬ</p><h1>Контроль поручений</h1><p>Реестр накопленных событий. Без изменения рабочего дашборда и без автоматических обращений в Битрикс24.</p></div><span class="chip">Только чтение</span></div>
+<section class="access" aria-label="Авторизация тестового API"><label for="token">Токен тестового API</label><div class="access-row"><input type="password" autocomplete="off" id="token" placeholder="Введите токен" aria-label="Токен тестового API"><button id="refresh" type="button">Загрузить сводку</button></div><p id="status" role="status">Данные не загружены. Токен не сохраняется и не передаётся в адресе страницы.</p></section>
+<section id="content" hidden>
+<div class="heading"><h2>Сохранённая история</h2><span>Все показатели ниже – из пилотной базы</span></div>
+<div class="metrics"><article><span>Поручений с историей</span><strong id="tasks">—</strong><small>Не общее число поручений Битрикс24</small></article><article><span>Событий изменений</span><strong id="events">—</strong><small>Сохранённые записи пилота</small></article><article><span>Переносов сроков</span><strong id="deadlines">—</strong><small>Факты изменения, не просрочка</small></article><article><span>Снимков комментариев</span><strong id="comments">—</strong><small>Архив в отдельной SQLite</small></article></div>
+<div class="heading"><h2>Показатели исполнительской дисциплины</h2><span>Подключим после сверки источников</span></div>
+<div class="kpis"><article><span>Исполнительская дисциплина, %</span><strong>Не рассчитано</strong><small>Нет подтверждённых данных по всем поручениям и исполнениям</small></article><article><span>Просроченные и приближающиеся</span><strong>Не рассчитано</strong><small>Нужны текущие статусы и фактические сроки</small></article><article><span>Недельная динамика исполнения</span><strong>Не рассчитано</strong><small>Нужен сопоставимый ряд по неделям</small></article></div>
+<section class="tablepanel" aria-label="Реестр задач с сохранёнными событиями"><div class="tablehead"><div><h2>Поручения в пилотной базе</h2><p id="coverage">—</p></div><label>Поиск по номеру<input type="search" id="query" placeholder="Например, 100193"></label></div><div class="tablewrap"><table><thead><tr><th>Задача</th><th>События</th><th>Переносы</th><th>Комментарии в снимках</th><th>Последнее событие</th><th></th></tr></thead><tbody id="rows"></tbody></table></div><p id="no-results" hidden>По такому номеру задач нет.</p></section>
+<p class="limitations">Это тестовый реестр наблюдений, а не готовый отчёт по ИД. Права доступа к группам, задания МЕМО и протоколов, исполнение главного ответственного и неактуальные поручения потребуют отдельного подключения и проверки методики.</p>
+</section>
+</main>
+</body>
+</html>
