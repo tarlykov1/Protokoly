@@ -154,7 +154,7 @@ def source(body: dict, uid: int = Depends(identity)):
             cache = json.loads(Path(os.environ["V8_MEMO_CACHE"]).read_text())
             if int(cache["group_id"]) != group:
                 raise ValueError
-            return candidates(cache["rows"], cache.get("generated_at"), True)
+            return source_rows(cache, cache.get("generated_at"), True)
         except (ValueError, KeyError, OSError, TypeError):
             raise HTTPException(503, "Недоступен срез МЕМО") from None
     if body.get("source") != "protocol":
@@ -176,7 +176,7 @@ def source(body: dict, uid: int = Depends(identity)):
         ):
             raise HTTPException(403)
         if meta.get("status") == "ready":
-            return candidates(store.load_data(pending)["rows"], meta.get("generated_at"), False)
+            return source_rows(store.load_data(pending), meta.get("generated_at"), False)
         if meta.get("status") not in ("queued", "processing"):
             raise HTTPException(503, "Ошибка протокольного отчёта")
         return {"status": meta["status"], "report": pending}
@@ -200,7 +200,16 @@ def source(body: dict, uid: int = Depends(identity)):
     rid, status = report
     if status != "ready":
         return {"status": status, "report": rid}
-    return candidates(store.load_data(rid)["rows"], store.load(rid).get("generated_at"), False)
+    return source_rows(store.load_data(rid), store.load(rid).get("generated_at"), False)
+
+
+def source_rows(data, at, memo):
+    if (
+        any(data.get(flag) is False for flag in ("complete", "pagination_complete"))
+        or data.get("partial") is True
+    ):
+        raise HTTPException(503, "Источник сообщил о неполной выгрузке")
+    return candidates(data["rows"], at, memo)
 
 
 def candidates(rows, at, memo):

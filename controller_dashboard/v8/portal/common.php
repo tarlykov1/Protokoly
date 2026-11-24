@@ -17,11 +17,14 @@ function roster8($list, $property = 0) {
     $field='PROPERTY_'.$ids[0];
     $rs=CIBlockElement::GetList([], ['IBLOCK_ID'=>$list,'ACTIVE'=>'Y'],false,false,['ID',$field]);
     $users=[];
-    while ($r=$rs->Fetch()) foreach ((array)$r[$field.'_VALUE'] as $id) {
+    while ($r=$rs->Fetch()) {
+        if (!array_key_exists($field.'_VALUE',$r)) return null;
+        foreach ((array)$r[$field.'_VALUE'] as $id) {
         if ($id!==null && $id!=='' && !ctype_digit((string)$id)) return null;
         if ((int)$id>0) $users[(int)$id]=true;
     }
-    return $users;
+    }
+    return $users ?: null;
 }
 function context8() {
     global $USER;
@@ -34,10 +37,13 @@ function context8() {
         fail8(503,'Для связи с удалённым сервисом требуется HTTPS');
     $controllers=roster8(91,306);
     foreach ($cfg['technical_ids'] ?? [] as $id) unset($controllers[$id]);
+    $groups=access8($USER,$cfg['groups'],$controllers);
+    return [$cfg,(int)$USER->GetID(),$groups,$controllers];
+}
+function access8($USER,$groups,$controllers) {
     $uid=(int)$USER->GetID();
     if (!$USER->IsAdmin() && $controllers===null) fail8(503,'Недоступен список 91');
     if (!$USER->IsAdmin() && !isset($controllers[$uid])) fail8(403,'Нет роли контролёра');
-    $groups=$cfg['groups'];
     if (!$USER->IsAdmin()) {
         $rs=UserToGroupTable::getList(['select'=>['GROUP_ID'],'filter'=>['=USER_ID'=>$uid,'@GROUP_ID'=>array_keys($groups),'@ROLE'=>['A','E','K']]]);
         $allowed=[];
@@ -45,7 +51,7 @@ function context8() {
         $groups=array_intersect_key($groups,$allowed);
     }
     if (!$groups) fail8(403,'Нет доступных групп');
-    return [$cfg,$uid,$groups,$controllers];
+    return $groups;
 }
 function backend8($cfg,$uid,$path,$body) {
     $client=new \Bitrix\Main\Web\HttpClient(['socketTimeout'=>6,'streamTimeout'=>45,'redirect'=>false]);

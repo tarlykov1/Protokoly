@@ -2,8 +2,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
@@ -65,7 +67,34 @@ class ServiceTest(unittest.TestCase):
         self.assertIsNone(service.minutes(dt("2031-04-30T09:00"), dt("2031-05-01T18:00")))
         self.assertIsNone(service.elapsed_days(None, dt("2026-04-30T09:00")))
 
+    def test_protocol_report_scope(self):
+        store = Mock()
+        store.load_data.return_value = {"rows": [{"task_id": 9, "document": "Протокол"}]}
+        params = {"report_type": "eos", "mode": "assignments", "group_ids": [3]}
+        modules = {
+            "protocol_dashboard": SimpleNamespace(service=Mock(), store=store),
+            "shared.router_v3_18": SimpleNamespace(
+                _REPORT_CACHE_LOCK=None, _find_reusable_report=None
+            ),
+        }
+        with patch.dict(sys.modules, modules):
+            body = {"source": "protocol", "group": 3, "report": "a" * 32}
+            for owner, groups, code in [(17, [3], 200), (18, [3], 403), (17, [4], 403)]:
+                store.load.return_value = {
+                    "user_id": owner,
+                    "params": {**params, "group_ids": groups},
+                    "status": "ready",
+                    "generated_at": "2026-10-27T09:00:00Z",
+                }
+                response = self.api.post("/source", json=body, headers=self.headers)
+                self.assertEqual(response.status_code, code)
+                if code == 200:
+                    self.assertEqual(response.json()["tasks"]["9"]["document"], "Протокол")
+            self.assertEqual(store.load_data.call_count, 1)
+
     def test_sources(self):
+        with self.assertRaises(HTTPException):
+            service.source_rows({"rows": [], "complete": False}, None, True)
         self.assertEqual(service.candidates([], None, False)["tasks"], {})
         with self.assertRaises(ValueError):
             service.candidates(None, None, True)

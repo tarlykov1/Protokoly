@@ -24,6 +24,9 @@ jobs:
           node --check portal/ui.js
           for file in portal/*.php portal.example.php; do php -l "$file"; done
           php tests/history.php
+          test "$(php tests/access.php member)" = OK
+          test "$(php tests/access.php admin)" = OK
+          test "$(php tests/access.php other | jq -r .error)" = 'Нет роли контролёра'
           bash -n install.sh && bash -n rollback.sh
           python build.py ../../controller-v8.0.zip
           cd ../..
@@ -40,6 +43,20 @@ jobs:
           bash rollback.sh portal /tmp/testportal
           test ! -e /tmp/testportal/controller-v8
           test -f /tmp/testportal/bitrix/modules/main/include/prolog_before.php
+      - name: Exercise isolated backend installation and rollback
+        shell: bash
+        run: |
+          id dev >/dev/null 2>&1 || sudo useradd --system dev
+          sudo mkdir -p /webapp/app/{protocol_dashboard,data}
+          sudo touch /webapp/app/protocol_dashboard/{__init__,store,service}.py
+          echo '{"group_id":671,"rows":[],"generated_at":"2026-10-27T09:00:00Z"}' | sudo tee /webapp/app/data/memo_activity_cache.json >/dev/null
+          cd /tmp/release/controller-v8
+          sudo env V8_PYTHON="$(command -v python)" bash install.sh backend
+          sudo bash -c 'source /etc/controller-v8/server.env; curl -fsS -H "X-Dashboard-Token: $V8_TOKEN" -H "X-Bitrix-User: 1" -H "Content-Type: application/json" --data "{\"source\":\"memo\",\"group\":671}" http://127.0.0.1:18108/source' | jq -e '.status=="ready"'
+          sudo bash rollback.sh backend
+          test ! -e /opt/controller-v8
+          test ! -e /etc/systemd/system/controller-v8.service
+          test -f /webapp/app/data/memo_activity_cache.json
       - uses: actions/upload-artifact@v4
         with:
           name: controller-v8.0

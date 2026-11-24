@@ -13,10 +13,11 @@ function related8($class,$key,$ids,$select,$filter=[], $order=[]) {
     return $out;
 }
 function history8($logs,$responsible) {
-    $started=null; $submitted=false; $dates=[]; $changes=[]; $moves=0;
+    $creation=false; $started=null; $submitted=false; $dates=[]; $changes=[]; $moves=0;
     foreach($logs as $l) {
         $field=$l['FIELD']; $old=(string)$l['FROM_VALUE']; $new=(string)$l['TO_VALUE'];
         $at=iso8($l['CREATED_DATE']);
+        if(in_array($field,['NEW','CREATED_DATE'],true)) $creation=true;
         if($field==='STATUS') {
             if(in_array($new,['1','2','3','6','7'],true)) $submitted=false;
             if((int)$l['USER_ID']===$responsible) {
@@ -30,7 +31,7 @@ function history8($logs,$responsible) {
         }
         if(!in_array($field,['COMMENT','NEW'],true)) $changes[]=['at'=>$at,'field'=>$field];
     }
-    return compact('started','submitted','dates','moves','changes');
+    return compact('creation','started','submitted','dates','moves','changes');
 }
 function chatMessages8($chat,$detail) {
     if(!\Bitrix\Im\Dialog::hasAccess('chat'.$chat)) return null;
@@ -154,7 +155,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
           'leader'=>$meta['leader'] ? ($names[$meta['leader']] ?? 'ID '.$meta['leader']) : null,
           'manager'=>$managers ? names8(array_unique($managers),$names) : null,'history'=>$h,'reaction'=>$reaction,'last_comment'=>$last];
         $observations[]= ['id'=>$id,'state'=>$state,'assigned'=>$assigned,'started'=>$h['started'] ?? null,
-           'history_known'=>$h!==null && ($h['started'] || $state==='open'),'activity'=>$activity,'last_comment'=>$last];
+           'history_known'=>$h!==null && ($h['started'] || ($h['creation'] && $state==='open')),'activity'=>$activity,'last_comment'=>$last];
     }
     $ob=backend8($cfg,$uid,'/observe',['group'=>$group,'rows'=>$observations,'channel'=>$spec['comments_source'] ?? $cfg['comments_source'] ?? 'unknown']);
     foreach($rows as &$row) $row+=$ob['extra'][$row['id']];

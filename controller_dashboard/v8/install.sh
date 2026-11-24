@@ -18,7 +18,7 @@ backend)
     (umask 077; set -o noclobber; "$py" -c 'import secrets;print("V8_TOKEN="+secrets.token_hex(32))' > /etc/controller-v8/server.env)
   fi
   mkdir "$dest"
-  trap 'rm -rf -- "$dest"; rm -f -- "$unit"; systemctl daemon-reload' ERR
+  trap 'systemctl disable --now controller-v8.service >/dev/null 2>&1 || true; rm -rf -- "$dest"; rm -f -- "$unit"; systemctl daemon-reload' ERR
   cp -R server "$dest/server"
   echo "controller-dashboard-v8.0" > "$dest/.controller-v8"
   printf '#!/bin/sh\nexec %s -m uvicorn service:app --app-dir /opt/controller-v8/server --host 127.0.0.1 --port 18108\n' "$py" > "$dest/start"
