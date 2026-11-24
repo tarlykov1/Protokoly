@@ -31,11 +31,11 @@ def allowed_from_env() -> frozenset[int]:
 
 
 async def call_client(client: object, method: str, params: dict):
-    """Invoke FastBitrix.call, supporting sync and async client implementations."""
+    """Use one raw REST call; preserve the v2 response envelope and pagination."""
     call = getattr(client, 'call', None)
     if not callable(call):
         raise ProbeError('У клиента Битрикс24 отсутствует метод .call')
-    response = call(method, params)
+    response = call(method, params, raw=True)
     return await response if inspect.isawaitable(response) else response
 
 
