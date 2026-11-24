@@ -64,7 +64,6 @@ def user_fields(payload: Any) -> list[dict[str, Any]]:
             continue
         dtype = str(value.get("TYPE") or "")
         usertype = str(value.get("PROPERTY_USER_TYPE") or "")
-        usertype_settings = value.get("USER_TYPE_SETTINGS")
         kind = (dtype + " " + usertype).lower()
         is_employee = "employee" in kind or "userid" in kind
         # Expose only schema, never user data or value dictionaries.

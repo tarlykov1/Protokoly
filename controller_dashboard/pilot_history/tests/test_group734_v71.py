@@ -194,9 +194,9 @@ def test_error_sanitized():
 
 
 def test_api_auth_and_static_assets(tmp_path):
+    import group734_routes_v71
     from fastapi import APIRouter, FastAPI, HTTPException
     from fastapi.testclient import TestClient
-    import group734_routes_v71
 
     root = tmp_path
     (root / "data").mkdir()
@@ -234,10 +234,10 @@ def test_installer_and_rollback_keep_pilot_sqlite(tmp_path):
     root = tmp_path / "controller_dashboard_test"
     root.mkdir()
     (root / "data").mkdir()
-    baseline = ('from fastapi import APIRouter\n'
-                'router = APIRouter(prefix="/controller-pilot-test")\n'
-                '@router.get("/overview/data")\n'
-                'def get_data(): return {}\n').encode("utf8")
+    baseline = (b'from fastapi import APIRouter\n'
+                b'router = APIRouter(prefix="/controller-pilot-test")\n'
+                b'@router.get("/overview/data")\n'
+                b'def get_data(): return {}\n')
     (root / "timeline_v6.py").write_bytes(baseline)
     (root / "overview_v67.html").write_text("v6.7 page", encoding="utf8")
     (root / "data" / "pilot.sqlite").write_bytes(b"history-unchanged")

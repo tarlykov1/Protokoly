@@ -1,8 +1,9 @@
 import asyncio
-from pathlib import Path
 import importlib.util
+from pathlib import Path
+
 import pytest
-spec = importlib.util.spec_from_file_location('roster',Path(__file__).with_name('roster_probe_v70.py'))
+spec = importlib.util.spec_from_file_location('roster',Path(__file__).resolve().parents[1] / 'roster_probe_v70.py')
 roster = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(roster)
 
@@ -17,10 +18,14 @@ class Client:
     async def call(self,name,params,raw=False):
         self.calls.append((name,params,raw))
         assert raw is True
-        if name=='lists.get.iblock.type.id': return {'result':'lists'}
-        if name=='lists.field.get': return self.schemas
-        if name=='tasks.task.get': return self.task
-        if name=='lists.element.get': return {'result':self.rows[params['start']:params['start']+50], 'total':len(self.rows)}
+        if name=='lists.get.iblock.type.id':
+            return {'result':'lists'}
+        if name=='lists.field.get':
+            return self.schemas
+        if name=='tasks.task.get':
+            return self.task
+        if name=='lists.element.get':
+            return {'result':self.rows[params['start']:params['start']+50], 'total':len(self.rows)}
         raise AssertionError(name)
 
 def test_detects_matching_controller():
@@ -66,7 +71,8 @@ def test_complete_pagination_fifty_plus_one():
 def test_unconfirmed_data_not_leaked():
     class Bad(Client):
         async def call(self,name,params,raw=False):
-            if name=='lists.field.get':raise RuntimeError('Bearer SECRET-ADDRESS')
+            if name=='lists.field.get':
+                raise RuntimeError('Bearer SECRET-ADDRESS')
             return await super().call(name,params,raw)
     with pytest.raises(roster.ProbeError) as ei:
         asyncio.run(roster.probe(Bad(),list_id=83,task_id=77852,group_id=734))
@@ -74,7 +80,8 @@ def test_unconfirmed_data_not_leaked():
 
 def test_employee_property_parser_never_uses_keys_as_ids():
     assert roster.parse_employee_property({'442':'150','443':'250'})=={150,250}
-    with pytest.raises(roster.ProbeError):roster.parse_employee_property({'442':'Иванов Иван'})
+    with pytest.raises(roster.ProbeError):
+        roster.parse_employee_property({'442':'Иванов Иван'})
 
 @pytest.mark.parametrize('value',[False,0,'',None,'-3','77a'])
 def test_invalid_id(value):
