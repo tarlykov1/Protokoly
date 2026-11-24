@@ -1,0 +1,46 @@
+name: Controller v8 release
+on:
+  pull_request:
+    paths: ['controller_dashboard/**', '.github/workflows/controller-v8.yml']
+  workflow_dispatch:
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --require-hashes -r requirements.lock
+      - run: pip install pytest playwright
+      - run: python -m playwright install chromium --only-shell
+      - run: |
+          pytest -q controller_dashboard/pilot_history/tests controller_dashboard/tests
+          python controller_dashboard/v8/tests/browser.py
+
+          cd controller_dashboard/v8
+          python -m unittest discover -s tests
+          node --test tests/model.cjs
+          node --check portal/ui.js
+          for file in portal/*.php portal.example.php; do php -l "$file"; done
+          php tests/history.php
+          bash -n install.sh && bash -n rollback.sh
+          python build.py ../../controller-v8.0.zip
+          cd ../..
+          unzip -q controller-v8.0.zip -d /tmp/release
+          cmp controller-v8.0.zip controller_dashboard/releases/controller-v8.0.zip
+          cd /tmp/release/controller-v8 && sha256sum -c SHA256SUMS
+          mkdir -p /tmp/testportal/bitrix/modules/main/include
+          touch /tmp/testportal/bitrix/modules/main/include/prolog_before.php
+          sudo mkdir -p /etc/controller-v8
+          sudo cp portal.example.php /etc/controller-v8/portal.php
+          echo test-fixture | sudo tee /etc/controller-v8/token >/dev/null
+          bash install.sh portal /tmp/testportal
+          test -f /tmp/testportal/controller-v8/index.php
+          bash rollback.sh portal /tmp/testportal
+          test ! -e /tmp/testportal/controller-v8
+          test -f /tmp/testportal/bitrix/modules/main/include/prolog_before.php
+      - uses: actions/upload-artifact@v4
+        with:
+          name: controller-v8.0
+          path: controller-v8.0.zip

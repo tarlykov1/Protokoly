@@ -25,7 +25,8 @@ def test_sync_client_method_returns_dict():
         def __init__(self):
             self.requests = []
 
-        def call(self, method, params):
+        def call(self, method, params, *, raw):
+            assert raw is True
             self.requests.append((method, params))
             return {'tasks': []}
 
@@ -37,7 +38,8 @@ def test_sync_client_method_returns_dict():
 
 def test_async_client_method_returns_dict():
     class FakeClient:
-        async def call(self, method, params):
+        async def call(self, method, params, *, raw):
+            assert raw is True
             return {'tasks': [{'id': 7, 'groupId': 456}]}
 
     result = run(cli.call_client(FakeClient(), 'tasks.task.list', {}))

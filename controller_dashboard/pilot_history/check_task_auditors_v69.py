@@ -67,9 +67,10 @@ def parse_auditors(raw: Any) -> set[int]:
     ids = set()
     for entry in raw:
         if isinstance(entry, dict):
-            found, entry = field(entry, "ID")
+            record = entry
+            found, entry = field(record, "ID")
             if not found:
-                found, entry = field(entry, "USER_ID")
+                found, entry = field(record, "USER_ID")
             if not found:
                 raise AuditorCheckError("Неизвестный формат записи наблюдателя")
         uid = positive_int(entry)

@@ -1,0 +1,19 @@
+[Unit]
+Description=Controller dashboard v8 private reporting service
+After=network.target
+[Service]
+User=dev
+WorkingDirectory=/webapp/app
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/controller-v8/server:/webapp/app
+Environment=V8_DB=/var/lib/controller-v8/observations.sqlite
+Environment=V8_MEMO_CACHE=/webapp/app/data/memo_activity_cache.json
+EnvironmentFile=/etc/controller-v8/server.env
+ExecStart=/opt/controller-v8/start
+UMask=0077
+StateDirectory=controller-v8
+StateDirectoryMode=0700
+Restart=on-failure
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

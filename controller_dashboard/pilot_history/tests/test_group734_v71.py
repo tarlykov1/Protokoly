@@ -229,8 +229,14 @@ def test_no_auto_write_and_no_auto_http():
 
 
 def test_installer_and_rollback_keep_pilot_sqlite(tmp_path):
+    import shutil
     import subprocess
 
+    package = tmp_path / "v71"
+    shutil.copytree(ROOT / "patches/v7.1-group734", package)
+    for pattern in ("*.py", "dashboard_group734_v71.*"):
+        for path in ROOT.glob(pattern):
+            shutil.copy2(path, package / path.name)
     root = tmp_path / "controller_dashboard_test"
     root.mkdir()
     (root / "data").mkdir()
@@ -243,17 +249,17 @@ def test_installer_and_rollback_keep_pilot_sqlite(tmp_path):
     (root / "data" / "pilot.sqlite").write_bytes(b"history-unchanged")
     (root / "data" / "pilot_comment_snapshots.sqlite").write_bytes(b"comments-unchanged")
     env = dict(os.environ, CONTROLLER_PILOT_APP_DIR=str(root))
-    proc = subprocess.run(["bash", str(ROOT / "install.sh")], env=env, capture_output=True, text=True)
+    proc = subprocess.run(["bash", str(package / "install.sh")], env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     updated = (root / "timeline_v6.py").read_text(encoding="utf8")
     assert "V71_GROUP734_ROUTES_BEGIN" in updated
     assert (root / "group734_v71.py").exists()
     assert (root / "data" / "pilot.sqlite").read_bytes() == b"history-unchanged"
-    second = subprocess.run(["bash", str(ROOT / "install.sh")], env=env, capture_output=True, text=True)
+    second = subprocess.run(["bash", str(package / "install.sh")], env=env, capture_output=True, text=True)
     assert second.returncode != 0
     backup = next(root.glob("timeline_v6.py.bak.v7_1_*"))
     stamp = backup.name.split("bak.v7_1_")[-1]
-    undone = subprocess.run(["bash", str(ROOT / "rollback.sh"), stamp], env=env,
+    undone = subprocess.run(["bash", str(package / "rollback.sh"), stamp], env=env,
                             capture_output=True, text=True)
     assert undone.returncode == 0, undone.stdout + undone.stderr
     assert (root / "timeline_v6.py").read_bytes() == baseline
