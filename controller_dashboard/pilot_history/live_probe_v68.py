@@ -7,8 +7,8 @@ No data is persisted and no titles/descriptions/comments are returned.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any
 
 TaskCall = Callable[[str, dict[str, Any]], Awaitable[Any]]

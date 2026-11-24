@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 def _date(value: Any) -> str:
     value = str(value or '').strip()
     return value[:10] if len(value) >= 10 and value[4:5] == '-' and value[7:8] == '-' else ''

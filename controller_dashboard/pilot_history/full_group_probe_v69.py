@@ -7,8 +7,8 @@ The caller must use fast_bitrix.call(..., raw=True) to preserve REST 'next'.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any
 
 from live_probe_v68 import MAX_PAGE, SELECT, ProbeError, _id, _rows, _value

@@ -2,6 +2,7 @@ import unittest
 
 from controller_dashboard.protocol_adapter import normalize_protocol_rows
 
+
 class ProtocolAdapterTests(unittest.TestCase):
     def test_mapping_and_dedupe(self):
         rows = [
