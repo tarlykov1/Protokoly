@@ -149,7 +149,7 @@ def save_observation(
     normalized = _normalized_comments(comments)
     state = {name: status if status in ("complete", "partial", "unavailable") else "partial"
              for name, status in ((name, source_status.get(name)) for name in VALID_SOURCES)}
-    stamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    stamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")  # noqa: UP017 – deployed on Python 3.10
     path = archive_path(history_path)
     if path.resolve() == history_path.resolve():
         raise ValueError("Путь архива совпадает с существующей базой истории")

@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import os
 import sys
-import inspect
 
 from live_probe_v68 import ProbeError, probe_group
 

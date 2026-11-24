@@ -1,6 +1,7 @@
-from pathlib import Path
 import sqlite3
 import sys
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -18,12 +19,14 @@ def fixture_db(tmp_path):
         (100193,'2026-11-23T11:23:00+03:00','DEADLINE',14),
         (102280,'2026-11-15T10:00:00+03:00','NEW',16),
     ])
-    con.commit();con.close()
+    con.commit()
+    con.close()
     archive=tmp_path/'pilot_comment_snapshots.sqlite'
     ac=sqlite3.connect(archive)
     ac.execute('CREATE TABLE comment_archive_items (task_id INTEGER, comment_id TEXT)')
     ac.executemany('INSERT INTO comment_archive_items VALUES (?,?)',[(100193,'9'),(100193,'10')])
-    ac.commit();ac.close()
+    ac.commit()
+    ac.close()
     return db,archive
 
 
@@ -56,7 +59,8 @@ def test_route_is_authorized_and_static_page_available(tmp_path,monkeypatch):
     monkeypatch.setenv('CONTROLLER_PILOT_TOKEN','test-token-only')
     monkeypatch.setenv('CONTROLLER_PILOT_DB_PATH',str(db))
     monkeypatch.setenv('CONTROLLER_PILOT_COMMENT_ARCHIVE_DB_PATH',str(archive))
-    app=FastAPI();app.include_router(timeline_v6.router)
+    app=FastAPI()
+    app.include_router(timeline_v6.router)
     client=TestClient(app)
     path='/controller-pilot-test/overview/data'
     assert client.get(path).status_code==401
@@ -75,4 +79,5 @@ def test_limit_and_missing_or_nonconforming_schema(tmp_path):
     assert overview_v67.overview_data(db,archive,limit=1)['capped'] is True
     for invalid in [0,251]:
         import pytest
-        with pytest.raises(ValueError):overview_v67.overview_data(db,archive,limit=invalid)
+        with pytest.raises(ValueError):
+            overview_v67.overview_data(db,archive,limit=invalid)

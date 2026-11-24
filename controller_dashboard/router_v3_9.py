@@ -7,9 +7,11 @@ import hmac
 import json
 import os
 from pathlib import Path
+
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
 from .memo_adapter import calculate_kpis, normalize_memo_rows
 from .protocol_adapter import normalize_protocol_rows
 
@@ -19,7 +21,7 @@ class StartRequest(BaseModel):
     group_ids: list[int] = Field(min_length=1, max_length=100)
 
 def create_controller_dashboard_router():
-    from protocol_dashboard import store, service
+    from protocol_dashboard import service, store
     router = APIRouter(prefix='/controller-dashboard-api', tags=['controller-dashboard'])
 
     def verify(token, user):
@@ -36,7 +38,7 @@ def create_controller_dashboard_router():
         try:
             result = {int(s) for s in header.split(',') if s.strip()}
         except ValueError:
-            raise HTTPException(400, 'Invalid protocol groups')
+            raise HTTPException(400, 'Invalid protocol groups') from None
         if len(result) > 100 or any(g <= 0 for g in result):
             raise HTTPException(400, 'Invalid protocol groups')
         return result
@@ -105,7 +107,7 @@ def create_controller_dashboard_router():
             try:
                 cache = json.loads(CACHE.read_text(encoding='utf-8'))
             except (OSError, ValueError):
-                raise HTTPException(503, 'MEMO cache unavailable')
+                raise HTTPException(503, 'MEMO cache unavailable') from None
             if int(cache.get('group_id') or 0) != int(os.getenv('CONTROLLER_MEMO_GROUP_ID', '671')):
                 raise HTTPException(503, 'MEMO group mismatch')
             if not isinstance(cache.get('rows'), list):

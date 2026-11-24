@@ -4,7 +4,6 @@ No network access and no authentication shortcuts. Apply authorization and
 Bitrix group filtering BEFORE passing rows into this adapter.
 """
 from collections import defaultdict
-from datetime import datetime
 from typing import Any
 
 DONE_STATUSES = {"Завершена", "Завершено", "5"}

@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from comment_archive_v66 import archive_path, read_archive, save_observation
+from comment_archive_v66 import read_archive, save_observation
 from timeline_v6 import router
 
 
@@ -98,7 +98,8 @@ def test_refuses_to_touch_pilot_history(tmp_path,monkeypatch):
         save_observation(history,100193,[comment()],{'legacy':'complete','chat':'unavailable'})
     assert history.read_bytes()==initial
     other=tmp_path/'other.sqlite'
-    with sqlite3.connect(other) as c: c.execute('CREATE TABLE pilot_history_events(id INTEGER)')
+    with sqlite3.connect(other) as c:
+        c.execute('CREATE TABLE pilot_history_events(id INTEGER)')
     monkeypatch.setenv('CONTROLLER_PILOT_COMMENT_ARCHIVE_DB_PATH',str(other))
     with pytest.raises(ValueError):
         save_observation(history,100193,[comment()],{'legacy':'complete','chat':'unavailable'})
@@ -115,7 +116,8 @@ def test_http_auth_opt_in_and_legacy_still_works(tmp_path,monkeypatch):
             if name=='task.commentitem.getlist':
                 assert opts=={'raw':True}
                 return {'result':[{'ID':'688732','AUTHOR_ID':'2891','AUTHOR_NAME':'Николай','POST_MESSAGE':'Старый комментарий','POST_DATE':'2026-09-24T13:47:00+03:00'}]}
-            if name=='tasks.task.get': return {'result':{'task':{'id':100193}}}
+            if name=='tasks.task.get':
+                return {'result':{'task':{'id':100193}}}
             raise AssertionError(name)
     tools=types.ModuleType('tools')
     tools_tools=types.ModuleType('tools.tools')
@@ -123,7 +125,8 @@ def test_http_auth_opt_in_and_legacy_still_works(tmp_path,monkeypatch):
     tools.tools=tools_tools
     monkeypatch.setitem(sys.modules,'tools',tools)
     monkeypatch.setitem(sys.modules,'tools.tools',tools_tools)
-    app=FastAPI();app.include_router(router)
+    app=FastAPI()
+    app.include_router(router)
     client=TestClient(app)
     endpoint='/controller-pilot-test/history/100193'
     assert client.post(endpoint+'/comments/snapshot').status_code==401

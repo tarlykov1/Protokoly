@@ -4,6 +4,7 @@ No access to runtime files or user credentials. The caller must use a report
 created for the authenticated Bitrix user and verify allowed project groups.
 """
 from __future__ import annotations
+
 from typing import Any
 
 def _date(value: Any) -> str:

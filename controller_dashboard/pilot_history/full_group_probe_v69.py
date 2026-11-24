@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from live_probe_v68 import MAX_PAGE, SELECT, ProbeError, _id, _rows, _value
 
@@ -113,7 +114,7 @@ async def probe_full_group(
     return {
         "ok": True,
         "group_id": group_id,
-        "checked_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "checked_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 – deployed on Python 3.10
         "source": "tasks.task.list / REST v2 / raw=True",
         "pages_checked": pages_checked,
         "tasks_checked": len(seen),

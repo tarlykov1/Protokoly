@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 TaskCall = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
@@ -158,7 +159,7 @@ async def probe_group(call: TaskCall, *, group_id: int, allowed_groups: frozense
     return {
         'ok': True,
         'group_id': group_id,
-        'checked_at_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        'checked_at_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),  # noqa: UP017 – deployed Python 3.10
         'source': 'tasks.task.list / REST v2 / first page only',
         'first_page_count': len(rows),
         'possibly_more_pages': len(rows) == MAX_PAGE,

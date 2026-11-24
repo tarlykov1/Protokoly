@@ -2,6 +2,7 @@
 import asyncio
 import importlib.util
 from pathlib import Path
+
 import pytest
 
 source = Path(__file__).resolve().parents[1] / "check_task_auditors_v69.py"

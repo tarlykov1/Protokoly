@@ -9,9 +9,11 @@ import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
 from .memo_adapter import calculate_kpis, normalize_memo_rows
 from .protocol_adapter import normalize_protocol_rows
 
@@ -50,7 +52,7 @@ def _find_reusable_report(store, user_id, groups, now):
             timestamp = datetime.fromisoformat(str(raw).replace('Z','+00:00'))
             if timestamp.tzinfo is None:
                 continue
-            age = max(0.0, (now - timestamp.astimezone(timezone.utc)).total_seconds())
+            age = max(0.0, (now - timestamp.astimezone(timezone.utc)).total_seconds())  # noqa: UP017 – Python 3.10 on dashboard server
             if age > (max_age if status == 'ready' else 1800):
                 continue
             if status == 'ready' and not store.data_path(rid).is_file():
@@ -64,7 +66,7 @@ def _find_reusable_report(store, user_id, groups, now):
 
 
 def create_controller_dashboard_router():
-    from protocol_dashboard import store, service
+    from protocol_dashboard import service, store
     router = APIRouter(prefix='/controller-dashboard-api', tags=['controller-dashboard'])
 
     def verify(token, user):
@@ -81,7 +83,7 @@ def create_controller_dashboard_router():
         try:
             result = {int(s) for s in header.split(',') if s.strip()}
         except ValueError:
-            raise HTTPException(400, 'Invalid protocol groups')
+            raise HTTPException(400, 'Invalid protocol groups') from None
         if len(result) > 100 or any(g <= 0 for g in result):
             raise HTTPException(400, 'Invalid protocol groups')
         return result
@@ -126,7 +128,7 @@ def create_controller_dashboard_router():
         if not allowed or not requested.issubset(allowed) or any(g <= 0 for g in requested):
             raise HTTPException(403, 'Protocol workgroup access required')
         with _REPORT_CACHE_LOCK:
-            reused = _find_reusable_report(store, uid, requested, datetime.now(timezone.utc))
+            reused = _find_reusable_report(store, uid, requested, datetime.now(timezone.utc))  # noqa: UP017 – Python 3.10 on dashboard server
             if reused:
                 rid, state = reused
                 return JSONResponse({'report_id': rid, 'status': state, 'reused': True},
@@ -157,7 +159,7 @@ def create_controller_dashboard_router():
             try:
                 cache = json.loads(CACHE.read_text(encoding='utf-8'))
             except (OSError, ValueError):
-                raise HTTPException(503, 'MEMO cache unavailable')
+                raise HTTPException(503, 'MEMO cache unavailable') from None
             if int(cache.get('group_id') or 0) != int(os.getenv('CONTROLLER_MEMO_GROUP_ID', '671')):
                 raise HTTPException(503, 'MEMO group mismatch')
             if not isinstance(cache.get('rows'), list):

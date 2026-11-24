@@ -1,12 +1,19 @@
 import json
 import sys
 from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from timeline_v6 import (_api_result, _legacy_comments, _chat_comments, _chat_id,
-                         _comment_ids, _merge_comments, router)
+from timeline_v6 import (
+    _chat_comments,
+    _chat_id,
+    _comment_ids,
+    _legacy_comments,
+    _merge_comments,
+    router,
+)
 
 
 def test_normalization_and_no_cross_source_dedup():
@@ -27,7 +34,8 @@ def test_normalization_and_no_cross_source_dedup():
 
 
 def client_with_adapter(tmp_path,monkeypatch,adapter):
-    import sqlite3, types
+    import sqlite3
+    import types
     db=tmp_path/'pilot.sqlite'
     with sqlite3.connect(db) as con:
         con.execute('CREATE TABLE pilot_history_events (id integer, task_id integer, field text, occurred_at text, actor_id integer, value_json text)')
@@ -35,11 +43,14 @@ def client_with_adapter(tmp_path,monkeypatch,adapter):
                     ('COMMENT','2026-08-01T10:00:00+03:00',8,json.dumps({'new':'101'})))
     monkeypatch.setenv('CONTROLLER_PILOT_DB_PATH',str(db))
     monkeypatch.setenv('CONTROLLER_PILOT_TOKEN','safe-pilot-token')
-    mod=types.ModuleType('tools'); modtools=types.ModuleType('tools.tools')
-    modtools.fast_bitrix=adapter; mod.tools=modtools
+    mod=types.ModuleType('tools')
+    modtools=types.ModuleType('tools.tools')
+    modtools.fast_bitrix=adapter
+    mod.tools=modtools
     monkeypatch.setitem(sys.modules,'tools',mod)
     monkeypatch.setitem(sys.modules,'tools.tools',modtools)
-    api=FastAPI();api.include_router(router)
+    api=FastAPI()
+    api.include_router(router)
     return TestClient(api),db
 
 
@@ -53,7 +64,8 @@ def test_both_methods_are_called_and_ids_preserved(tmp_path,monkeypatch):
             if name == 'tasks.task.get':
                 return {'result':{'task':{'chatId':2000}}}
             if name == 'im.dialog.messages.get':
-                if 'FIRST_ID' in params: return {'result':{'messages':[]}}
+                if 'FIRST_ID' in params:
+                    return {'result':{'messages':[]}}
                 return {'result':{'messages':[{'id':101,'author_id':9,'text':'Новый чат','date':'2026-10-01T11:00:00+03:00','params':[]}], 'users':[]}}
             raise AssertionError(name)
     api,db=client_with_adapter(tmp_path,monkeypatch,Adapter())
@@ -79,11 +91,14 @@ def test_both_methods_are_called_and_ids_preserved(tmp_path,monkeypatch):
 def test_one_source_failure_does_not_hide_other_source(tmp_path,monkeypatch):
     class Adapter:
         async def call(self,name,params,**kwargs):
-            if name=='task.commentitem.getlist': raise RuntimeError('legacy disabled')
+            if name=='task.commentitem.getlist':
+                raise RuntimeError('legacy disabled')
             if name=='task.commentitem.get':
                 return {'result':{'ID':'101','POST_MESSAGE':'Архив по ID','AUTHOR_ID':'2'}}
-            if name=='tasks.task.get': return {'result':{'task':{'chatId':150}}}
-            if name=='im.dialog.messages.get': raise RuntimeError('im scope denied')
+            if name=='tasks.task.get':
+                return {'result':{'task':{'chatId':150}}}
+            if name=='im.dialog.messages.get':
+                raise RuntimeError('im scope denied')
             raise AssertionError(name)
     api,_=client_with_adapter(tmp_path,monkeypatch,Adapter())
     result=api.get('/controller-pilot-test/history/100193/comments',headers={'Authorization':'Bearer safe-pilot-token'}).json()

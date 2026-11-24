@@ -64,7 +64,7 @@ def _connect() -> sqlite3.Connection:
         conn.execute("PRAGMA busy_timeout=2000")
         return conn
     except sqlite3.Error:
-        raise HTTPException(503, "Не удалось открыть базу истории в режиме чтения")
+        raise HTTPException(503, "Не удалось открыть базу истории в режиме чтения") from None
 
 
 def _identifier(name: str) -> str:
@@ -318,7 +318,7 @@ async def timeline_people(task_id: int, authorization: str | None = Header(defau
         if not callable(method):
             raise AttributeError("call")
     except (ImportError, AttributeError):
-        raise HTTPException(503, "Адаптер Битрикс24 не поддерживает user.get через call; история остаётся доступна")
+        raise HTTPException(503, "Адаптер Битрикс24 не поддерживает user.get через call; история остаётся доступна") from None
 
     # Cap parallelism to avoid heavy load on the corporate REST gateway.
     semaphore = asyncio.Semaphore(3)
@@ -482,7 +482,7 @@ def _comment_sort_key(item: dict[str, Any]) -> tuple[float, str, str]:
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=timezone.utc)  # noqa: UP017 – server Python 3.10
         stamp = dt.timestamp()
     except ValueError:
         stamp = 0.0
@@ -517,7 +517,7 @@ async def timeline_comments(task_id: int, authorization: str | None = Header(def
         if not callable(method):
             raise AttributeError("call")
     except (ImportError, AttributeError):
-        raise HTTPException(503, "Адаптер Битрикс24 не поддерживает чтение комментариев через call")
+        raise HTTPException(503, "Адаптер Битрикс24 не поддерживает чтение комментариев через call") from None
 
     async def call_api(name: str, params: Any, *, raw: bool = False) -> Any:
         # The fast_bitrix24 client batches normal calls. Legacy task.commentitem
@@ -656,9 +656,9 @@ async def timeline_comments(task_id: int, authorization: str | None = Header(def
 
 # v6.6: separate append-only snapshots. The existing timeline and pilot DB stay read-only.
 if __package__:
-    from .comment_archive_v66 import save_observation, read_archive
+    from .comment_archive_v66 import read_archive, save_observation
 else:  # Local standalone tests, not the deployed package import.
-    from comment_archive_v66 import save_observation, read_archive
+    from comment_archive_v66 import read_archive, save_observation
 
 
 @router.get("/history/{task_id}/comment-archive")
@@ -673,7 +673,7 @@ async def timeline_comment_archive(task_id: int, authorization: str | None = Hea
     try:
         return await asyncio.to_thread(read_archive, _db_path(), task_id)
     except (sqlite3.Error, OSError, ValueError):
-        raise HTTPException(503, "Архив снимков недоступен для чтения")
+        raise HTTPException(503, "Архив снимков недоступен для чтения") from None
 
 
 @router.post("/history/{task_id}/comments/snapshot")
@@ -704,11 +704,11 @@ async def timeline_comment_snapshot(task_id: int, authorization: str | None = He
 
 # v6.7: isolated read-only pilot overview, reusing the existing authorized router.
 if __package__:
-    from .overview_v67 import overview_data
     from .comment_archive_v66 import archive_path
+    from .overview_v67 import overview_data
 else:
-    from overview_v67 import overview_data
     from comment_archive_v66 import archive_path
+    from overview_v67 import overview_data
 
 
 @router.get("/overview/data")
