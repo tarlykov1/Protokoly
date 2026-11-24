@@ -21,21 +21,55 @@ class ProbeError(RuntimeError):
     """Safe diagnostic message; no raw API error text/credentials."""
 
 
+def _shape_summary(payload: Any) -> str:
+    """Return structure metadata only, never response values or arbitrary keys."""
+    allowed = ('tasks', 'result', 'data', 'response', 'items', 'error')
+    def summary(value: Any) -> str:
+        typ = type(value).__name__
+        if isinstance(value, dict):
+            flags = ','.join(key for key in allowed if key in value) or 'none'
+            return f'dict(size={len(value)}, known={flags})'
+        if isinstance(value, (list, tuple)):
+            return f'{typ}(size={len(value)})'
+        return typ
+
+    parts = ['root=' + summary(payload)]
+    current = payload
+    for depth in range(3):
+        if not isinstance(current, dict):
+            break
+        child_key = next((key for key in ('result', 'data', 'response', 'tasks') if key in current), None)
+        if child_key is None:
+            break
+        current = current[child_key]
+        parts.append(f'level{depth + 1}({child_key})=' + summary(current))
+    return '; '.join(parts)
+
+
 def _rows(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        data = payload
-    elif isinstance(payload, dict):
-        data = payload.get('tasks')
-        if data is None:
-            data = payload.get('result')
-            if isinstance(data, dict):
-                data = data.get('tasks')
-        if data is None:
-            raise ProbeError('Неизвестный формат ответа tasks.task.list')
-    else:
-        raise ProbeError('Неизвестный формат ответа tasks.task.list')
-    if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
-        raise ProbeError('В ответе отсутствует ожидаемый список задач')
+    """Unwrap known REST-v2 result envelopes; refuse unknown/v3 shapes."""
+    data: Any = payload
+    for _ in range(4):
+        if isinstance(data, list):
+            break
+        if not isinstance(data, dict):
+            raise ProbeError('Неизвестный формат ответа tasks.task.list; ' + _shape_summary(payload))
+        if 'error' in data:
+            raise ProbeError('REST вернул признак ошибки (содержание скрыто); ' + _shape_summary(payload))
+        if 'tasks' in data:
+            data = data['tasks']
+        elif 'result' in data:
+            data = data['result']
+        elif 'data' in data:
+            data = data['data']
+        elif 'response' in data:
+            data = data['response']
+        else:
+            raise ProbeError('Неизвестный формат ответа tasks.task.list; ' + _shape_summary(payload))
+    if not isinstance(data, list):
+        raise ProbeError('В ответе отсутствует ожидаемый список задач; ' + _shape_summary(payload))
+    if not all(isinstance(item, dict) for item in data):
+        raise ProbeError('В ответе есть запись не в формате объекта; ' + _shape_summary(payload))
     return data
 
 
