@@ -259,13 +259,9 @@ async def collect(client: Any, *, max_pages: int = 20,
         if nxt is None:
             if total is not None and len(ids_seen) < total:
                 raise CollectionError("REST не подтвердил конец списка задач")
-            if len(records) == PAGE_SIZE and total is None:
-                # With no next, REST v2 convention states this is the last page.
-                # An exactly-full final page cannot be distinguished from a
-                # truncated response without total, so do not claim completeness.
-                complete = False
-            else:
-                complete = True
+            # With no next and no total, an exactly-full page is ambiguous.
+            # Do not claim full coverage until REST confirms completion.
+            complete = not (len(records) == PAGE_SIZE and total is None)
             break
         if nxt != offset + PAGE_SIZE or len(records) != PAGE_SIZE:
             raise CollectionError("Постраничный ответ задач неполон или некорректен")

@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+
 spec = importlib.util.spec_from_file_location('roster',Path(__file__).resolve().parents[1] / 'roster_probe_v70.py')
 roster = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(roster)
