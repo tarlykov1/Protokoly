@@ -28,10 +28,10 @@ jobs:
           test "$(php tests/access.php admin)" = OK
           test "$(php tests/access.php other | jq -r .error)" = 'Нет роли контролёра'
           bash -n install.sh && bash -n rollback.sh
-          python build.py ../../controller-v8.0.zip
+          python build.py ../../controller-v8.0-overview.zip
           cd ../..
-          unzip -q controller-v8.0.zip -d /tmp/release
-          cmp controller-v8.0.zip controller_dashboard/releases/controller-v8.0.zip
+          unzip -q controller-v8.0-overview.zip -d /tmp/release
+          cmp controller-v8.0-overview.zip controller_dashboard/releases/controller-v8.0-overview.zip
           cd /tmp/release/controller-v8 && sha256sum -c SHA256SUMS
           mkdir -p /tmp/testportal/bitrix/modules/main/include
           touch /tmp/testportal/bitrix/modules/main/include/prolog_before.php
@@ -60,4 +60,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: controller-v8.0
-          path: controller-v8.0.zip
+          path: controller-v8.0-overview.zip

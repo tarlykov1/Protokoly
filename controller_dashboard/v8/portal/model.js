@@ -52,6 +52,6 @@ const Model = (() => {
     }
     return [...byPeriod];
   }
-  return {missing,day,match,metrics,zones,series,discipline};
+  return {bucket,missing,day,match,metrics,zones,series,discipline};
 })();
 if(typeof module!=='undefined') module.exports=Model;

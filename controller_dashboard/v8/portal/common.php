@@ -56,11 +56,17 @@ function access8($USER,$groups,$controllers) {
 function backend8($cfg,$uid,$path,$body) {
     $client=new \Bitrix\Main\Web\HttpClient(['socketTimeout'=>6,'streamTimeout'=>45,'redirect'=>false]);
     $client->setHeader('Content-Type','application/json');
-    $client->setHeader('X-Dashboard-Token',trim(file_get_contents('/etc/controller-v8/token')));
+    $tokenPath='/etc/controller-v8/token';
+    $token=is_readable($tokenPath) ? trim((string)file_get_contents($tokenPath)) : '';
+    if(strlen($token)<32) fail8(503,'На веб-сервере портала не настроен или недоступен файл токена кабинета');
+    $client->setHeader('X-Dashboard-Token',$token);
     $client->setHeader('X-Bitrix-User',(string)$uid);
     $reply=$client->post(rtrim($cfg['backend'],'/').$path,json_encode($body,JSON_THROW_ON_ERROR));
     $value=json_decode((string)$reply,true);
-    if ($client->getStatus()!==200 || !is_array($value)) fail8(503,'Сервис кабинета или источник данных недоступен');
+    $status=(int)$client->getStatus();
+    if ($status===0) fail8(503,'Нет соединения от веб-сервера портала до службы кабинета');
+    if ($status===401 || $status===403) fail8(503,'Служба отклонила запрос портала. Проверьте токен и права на источник');
+    if ($status!==200 || !is_array($value)) fail8(503,'Сервис кабинета или источник данных недоступен');
     return $value;
 }
 function iso8($date) {

@@ -70,6 +70,8 @@ with tempfile.TemporaryDirectory() as tmp:
                     "accomplices": ["Соисполнитель"] if group == 1 else [],
                     "due": None,
                     "stage": "Проверка",
+                    "status": "5" if group == 1 else "3",
+                    "closed": "2026-10-27T12:00:00Z" if group == 1 else None,
                     "responsible": "Исполнитель " + str(group),
                     "responsible_id": group,
                     "history": None,
@@ -87,6 +89,9 @@ with tempfile.TemporaryDirectory() as tmp:
         page.goto(f"http://127.0.0.1:{server.server_port}")
         expect(page.locator("#body tr")).to_have_count(2)
         expect(page.locator("#kpis strong").first).to_have_text("50 %")
+        expect(page.locator("#statusGraph")).to_contain_text("Завершена")
+        expect(page.locator("#closedChart svg")).to_have_count(1)
+        expect(page.locator("#controlGraph")).to_contain_text("Нет данных")
         page.locator("#person").fill("Соисполнитель")
         expect(page.locator("#body tr")).to_have_count(1)
         page.locator("#body button").click()
@@ -105,6 +110,8 @@ with tempfile.TemporaryDirectory() as tmp:
         page.locator("#refresh").click()
         expect(page.locator("#sources")).to_contain_text("Источник недоступен")
         expect(page.locator("#kpis strong").first).to_have_text("Нет данных")
+        expect(page.locator("#dueGraph")).to_contain_text("Ожидаются данные")
+        expect(page.locator("#closedChart svg")).to_have_count(0)
         assert not errors, errors
         browser.close()
     server.shutdown()

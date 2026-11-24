@@ -37,23 +37,96 @@ async function load(){
   for(const g of waiting)results.set(g.id,{status:'error',error:'Отчёт ещё не готов. Повторите обновление.'});
   $('refresh').disabled=false; render();
 }
-function plot(points){
-  const box=$('chart');box.replaceChildren();
-  if(!points.length){box.textContent='Нет сопоставимых срезов';return;}
-  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),width=Math.max(420,points.length*105);
-  svg.setAttribute('width',width);svg.setAttribute('height',165);svg.setAttribute('aria-label','ИД по периодам, в процентах');
-  function draw(tag,attrs,label){const e=document.createElementNS(svg.namespaceURI,tag);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,v);if(label)e.textContent=label;svg.append(e);}
-  let prev=null;
-  for(const [i,[label,value]] of points.entries()){
-    const x=55+i*(width-110)/Math.max(1,points.length-1),y=120-(value??0);
-    draw('text',{x,y:153,'text-anchor':'middle'},label);
-    if(value!==null){
-      if(prev)draw('line',{x1:prev.x,y1:prev.y,x2:x,y2:y,stroke:'#126660','stroke-width':3});
-      draw('circle',{cx:x,cy:y,r:4,fill:'#126660'});
-    }
-    draw('text',{x,y:value===null?80:y+16,'text-anchor':'middle'},pct(value));prev=value===null?null:{x,y};
+function plot(points, target='chart', percent=true){
+  const box=$(target); box.replaceChildren();
+  if(!points.length || points.every(([,value])=>value==null)){
+    box.append(elem('p',percent?'Нет сопоставимых срезов ИД':'Нет данных о закрытиях по периодам'));
+    return;
   }
-  box.append(svg,elem('p','Последний совместный срез периода. В расчёте – доступные сейчас поручения, присутствовавшие в этом срезе. До первой выгрузки история отсутствует.'));
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  const width=Math.max(430,points.length*96), left=42, bottom=140, top=20;
+  const max=percent?100:Math.max(1,...points.map(([,v])=>v||0));
+  svg.setAttribute('viewBox',`0 0 ${width} 175`);svg.style.minWidth=Math.min(width,points.length*75)+'px';
+  svg.setAttribute('role','img');svg.setAttribute('aria-label',percent?'Динамика ИД':'Число закрытых поручений');
+  function draw(tag,attrs,parent=svg){
+    const n=document.createElementNS(svg.namespaceURI,tag);
+    for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);
+    parent.append(n);return n;
+  }
+  const grad=draw('linearGradient',{id:'fill-'+target,x2:'0%',y2:'100%'},draw('defs',{}));
+  const color=percent?'#7453cb':'#208399';
+  draw('stop',{offset:'0%','stop-color':color,'stop-opacity':'.35'},grad);
+  draw('stop',{offset:'100%','stop-color':color,'stop-opacity':'.02'},grad);
+  const ticks=percent?4:Math.min(4,max);
+  for(let i=0;i<=ticks;i++){
+    const val=percent?max*i/ticks:Math.round(max*i/ticks),y=bottom-(bottom-top)*val/max;
+    draw('line',{x1:left,x2:width-20,y1:y,y2:y,stroke:'#e3e7f1'});
+    draw('text',{x:4,y:y+4,fill:'#5f6c86'}).textContent=val;
+  }
+  let segment=[];
+  function paint(){
+    if(!segment.length)return;
+    const coords=segment.map(p=>p.join(',')).join(' ');
+    draw('polygon',{points:segment[0][0]+','+bottom+' '+coords+' '+segment.at(-1)[0]+','+bottom,fill:'url(#fill-'+target+')'});
+    draw('polyline',{points:coords,stroke:color,'stroke-width':3,fill:'none','stroke-linejoin':'round'});
+    segment=[];
+  }
+  const markers=[];
+  for(const [i,[label,v]] of points.entries()){
+    const x=points.length===1?width/2:left+i*(width-left-35)/(points.length-1);
+    draw('text',{x,y:164,'text-anchor':'middle',fill:'#4a5871'}).textContent=label;
+    if(v==null){paint();continue;}
+    const y=bottom-(bottom-top)*v/max;segment.push([x,y]);markers.push({x,y,label,v});
+  }
+  paint();
+  for(const {x,y,label,v} of markers){
+    const dot=draw('circle',{cx:x,cy:y,r:5,fill:color,stroke:'white','stroke-width':2});
+    draw('title',{},dot).textContent=label+' · '+(percent?pct(v):v+' шт.');
+    draw('text',{x,y:y-8,'text-anchor':'middle',fill:color}).textContent=percent?pct(v):v;
+  }
+  box.append(svg);
+}
+function chartBars(id,entries,complete,empty){
+  const box=$(id);box.replaceChildren();
+  if(!complete){box.append(elem('p','Ожидаются данные выбранных групп'));return;}
+  if(!entries.length){box.append(elem('p',empty));return;}
+  const scale=Math.max(1,...entries.map(([,v])=>v||0));
+  for(const [name,value] of entries){
+    const row=elem('div');row.className='bar-row';
+    const line=elem('div');line.className='bar-label';line.append(elem('span',name),elem('b',fmt(value)));
+    const track=elem('div');track.className='bar-track';
+    if(value!=null){const fill=elem('i');fill.style.width=100*value/scale+'%';track.append(fill);}
+    row.append(line,track);box.append(row);
+  }
+}
+function overviewCharts(rows,complete,now){
+  const codes={1:'Новая',2:'Ожидает выполнения',3:'Выполняется',4:'Ждёт контроля',5:'Завершена',6:'Отложена',7:'Отклонена'};
+  const statuses=new Map(),stages=new Map();
+  for(const r of rows){
+    const name=codes[r.status]||Model.missing;statuses.set(name,(statuses.get(name)||0)+1);
+    if(r.source==='memo'&&Model.zones['Просрочено'](r,now)){
+      const stage=r.stage||Model.missing;stages.set(stage,(stages.get(stage)||0)+1);
+    }
+  }
+  const count=fn=>{const values=rows.map(fn);return values.some(v=>v==null)?null:values.filter(Boolean).length;};
+  const dates=[['Просрочено',count(r=>Model.zones['Просрочено'](r,now))],
+    ['Срок сегодня',count(r=>r.state==null?null:r.state==='open'&&!!r.due&&Model.day(r.due)===Model.day(now))],
+    ['Ближайшие 7 суток',count(r=>r.state==null?null:r.state==='open'&&!!r.due&&Date.parse(r.due)>=now&&Date.parse(r.due)<=now+7*86400000)]];
+  chartBars('statusGraph',[...statuses],complete,'Нет поручений по фильтрам');
+  chartBars('dueGraph',dates,complete,'Нет поручений');
+  chartBars('stageGraph',[...stages].sort((a,b)=>b[1]-a[1]),complete,'Нет подтверждённых просрочек в выборке');
+  chartBars('controlGraph',[['Контролёр в наблюдателях',count(r=>r.observed_by_controller)],
+    ['Есть комментарий контролёра',count(r=>r.reaction)],['Назначен помощник',count(r=>r.assistants==null?null:r.assistants.length>0)]],complete,'Нет поручений');
+}
+function closedSeries(rows,period){
+  const counts=new Map();
+  for(const r of rows){
+    if(r.state==null || (r.state==='done'&&!r.closed))return [];
+    if(r.state!=='done')continue;
+    const key=Model.bucket(Model.day(r.closed),period);
+    counts.set(key,(counts.get(key)||0)+1);
+  }
+  return [...counts].sort(([a],[b])=>a.localeCompare(b));
 }
 function options(id,values){$(id).replaceChildren(...[...new Set(values.filter(Boolean))].sort().map(x=>new Option(x,x)));}
 function render(){
@@ -76,10 +149,8 @@ function render(){
     const el=elem('div',label);el.append(elem('strong',i<2?pct(metrics[i]):fmt(metrics[i])));return el;
   }));
   if(!complete)$('kpis').append(elem('p','Неполный охват источников'));
-  const counts=new Map();for(const r of rows)if(r.source==='memo'&&Model.zones['Просрочено'](r,now)){
-    const s=r.stage||Model.missing;counts.set(s,(counts.get(s)||0)+1);
-  }
-  $('stages').textContent='Просрочено по стадиям МЕМО (загруженные поручения) · '+([...counts].map(([k,v])=>k+' — '+v).join(' / ')||'Нет подтверждённых просрочек');
+  overviewCharts(rows,complete,now);
+  plot(complete?closedSeries(rows,$('period').value):[], 'closedChart', false);
   $('zones').replaceChildren(...Object.entries(Model.zones).map(([label,fn])=>{
     const values=rows.map(r=>fn(r,now)),n=values.filter(x=>x===true).length,u=values.filter(x=>x==null).length;
     const b=elem('button',label+' · '+(u===values.length&&u?'Нет данных':complete||n?n:'—')+(u?' (+'+u+' без данных)':''));

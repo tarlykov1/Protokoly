@@ -151,6 +151,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
         $rows[]=['id'=>$id,'title'=>$r['TITLE'],'document'=>$meta['document'],'event'=>$meta['event'],
           'state'=>$state,'stage'=>$stage,'status'=>$status,'due'=>iso8($r['DEADLINE']),'closed'=>iso8($r['CLOSED_DATE']),
           'assigned'=>$assigned,'responsible'=>$names[$resp] ?? ($resp ? 'ID '.$resp : null),'responsible_id'=>$resp,
+          'observed_by_controller'=>$controllers===null ? null : (bool)array_intersect($aud,array_keys($controllers)),
           'accomplices'=>names8($acc,$names),'assistants'=>$assistants===null ? null : names8(array_intersect($aud,array_keys($assistants)),$names),
           'leader'=>$meta['leader'] ? ($names[$meta['leader']] ?? 'ID '.$meta['leader']) : null,
           'manager'=>$managers ? names8(array_unique($managers),$names) : null,'history'=>$h,'reaction'=>$reaction,'last_comment'=>$last];
