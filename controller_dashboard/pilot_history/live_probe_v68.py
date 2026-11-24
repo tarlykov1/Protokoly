@@ -28,7 +28,16 @@ def _shape_summary(payload: Any) -> str:
         typ = type(value).__name__
         if isinstance(value, dict):
             flags = ','.join(key for key in allowed if key in value) or 'none'
-            return f'dict(size={len(value)}, known={flags})'
+            numeric_keys = bool(value) and all(
+                isinstance(key, int) and not isinstance(key, bool)
+                or isinstance(key, str) and key.isdigit()
+                for key in value
+            )
+            object_values = sum(isinstance(item, dict) for item in value.values())
+            field_names = ('id', 'ID', 'groupId', 'GROUP_ID', 'status', 'STATUS')
+            task_fields = ','.join(field for field in field_names if field in value) or 'none'
+            return (f'dict(size={len(value)}, known={flags}, numeric_keys={numeric_keys}, '
+                    f'object_values={object_values}, task_fields={task_fields})')
         if isinstance(value, (list, tuple)):
             return f'{typ}(size={len(value)})'
         return typ
@@ -64,6 +73,18 @@ def _rows(payload: Any) -> list[dict[str, Any]]:
             data = data['data']
         elif 'response' in data:
             data = data['response']
+        elif (0 < len(data) <= MAX_PAGE
+              and all((isinstance(key, int) and not isinstance(key, bool))
+                      or (isinstance(key, str) and key.isdigit())
+                      for key in data)
+              and all(isinstance(item, dict) for item in data.values())
+              and all(_id(_value(item, 'ID')) is not None
+                      and _id(_value(item, 'GROUP_ID')) is not None
+                      for item in data.values())):
+            # A task-ID/index keyed mapping from some fast_bitrix24 versions.
+            # Validate each record's actual group against the allowlist below.
+            data = list(data.values())
+            break
         else:
             raise ProbeError('Неизвестный формат ответа tasks.task.list; ' + _shape_summary(payload))
     if not isinstance(data, list):
