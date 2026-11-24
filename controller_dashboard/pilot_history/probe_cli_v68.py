@@ -31,8 +31,16 @@ def allowed_from_env() -> frozenset[int]:
 
 
 async def run(group_id: int) -> dict:
-    # The adapter already exists in the installed app; no additional credentials.
-    from tools.tools import fast_bitrix
+    # Do not disclose exception messages: they may contain URLs or credentials.
+    try:
+        from tools.tools import fast_bitrix
+    except Exception as exc:
+        raise ProbeError(
+            f'Не удалось загрузить клиент Битрикс24 ({type(exc).__name__})'
+        ) from None
+
+    if not callable(fast_bitrix):
+        raise ProbeError('Клиент Битрикс24 не является вызываемым объектом')
 
     async def call(method: str, params: dict):
         return await fast_bitrix(method, params)
@@ -52,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except Exception as exc:
         # Do not print raw API exceptions: they can contain addresses/headers.
-        print(json.dumps({'ok': False, 'error': 'Ошибка интеграции; проверьте журнал на сервере'}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({'ok': False, 'error': 'Неожиданная ошибка диагностического скрипта', 'kind': type(exc).__name__}, ensure_ascii=False), file=sys.stderr)
         return 3
 
 
