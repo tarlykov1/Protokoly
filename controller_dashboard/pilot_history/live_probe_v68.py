@@ -75,7 +75,11 @@ async def probe_group(call: TaskCall, *, group_id: int, allowed_groups: frozense
     try:
         result = await call('tasks.task.list', params)
     except Exception as exc:
-        raise ProbeError('REST-запрос завершился ошибкой; проверьте системный журнал без передачи секретов') from exc
+        # Exception type is safe to show; never display raw exception messages,
+        # which may contain a URL, headers or REST response content.
+        raise ProbeError(
+            f'Ошибка запроса tasks.task.list ({type(exc).__name__})'
+        ) from None
     rows = _rows(result)
     if len(rows) > MAX_PAGE:
         raise ProbeError('Ответ длиннее одной страницы: возможен неограниченный запрос')
