@@ -12,7 +12,7 @@ import asyncio
 import json
 import os
 import sys
-from pathlib import Path
+import inspect
 
 from live_probe_v68 import ProbeError, probe_group
 
@@ -30,6 +30,15 @@ def allowed_from_env() -> frozenset[int]:
     return ids
 
 
+async def call_client(client: object, method: str, params: dict):
+    """Invoke FastBitrix.call, supporting sync and async client implementations."""
+    call = getattr(client, 'call', None)
+    if not callable(call):
+        raise ProbeError('У клиента Битрикс24 отсутствует метод .call')
+    response = call(method, params)
+    return await response if inspect.isawaitable(response) else response
+
+
 async def run(group_id: int) -> dict:
     # Do not disclose exception messages: they may contain URLs or credentials.
     try:
@@ -39,11 +48,9 @@ async def run(group_id: int) -> dict:
             f'Не удалось загрузить клиент Битрикс24 ({type(exc).__name__})'
         ) from None
 
-    if not callable(fast_bitrix):
-        raise ProbeError('Клиент Битрикс24 не является вызываемым объектом')
-
+    # The production integration is an object with .call(), not a function.
     async def call(method: str, params: dict):
-        return await fast_bitrix(method, params)
+        return await call_client(fast_bitrix, method, params)
 
     return await probe_group(call, group_id=group_id, allowed_groups=allowed_from_env())
 
