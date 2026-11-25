@@ -45,9 +45,9 @@ function plot(points, target='chart', percent=true){
     return;
   }
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-  const width=Math.max(430,points.length*96), left=42, bottom=140, top=20;
+  const width=600, left=42, bottom=140, top=20;
   const max=percent?100:Math.max(1,...points.map(([,v])=>v||0));
-  svg.setAttribute('viewBox',`0 0 ${width} 175`);svg.style.minWidth=Math.min(width,points.length*75)+'px';
+  svg.setAttribute('viewBox',`0 0 ${width} 175`);
   svg.setAttribute('role','img');svg.setAttribute('aria-label',percent?'Динамика ИД':'Число закрытых поручений');
   function draw(tag,attrs,parent=svg){
     const n=document.createElementNS(svg.namespaceURI,tag);
@@ -55,7 +55,7 @@ function plot(points, target='chart', percent=true){
     parent.append(n);return n;
   }
   const grad=draw('linearGradient',{id:'fill-'+target,x2:'0%',y2:'100%'},draw('defs',{}));
-  const color=percent?'#7453cb':'#208399';
+  const color='#7160da';
   draw('stop',{offset:'0%','stop-color':color,'stop-opacity':'.35'},grad);
   draw('stop',{offset:'100%','stop-color':color,'stop-opacity':'.02'},grad);
   const ticks=percent?4:Math.min(4,max);
@@ -75,15 +75,15 @@ function plot(points, target='chart', percent=true){
   const markers=[];
   for(const [i,[label,v]] of points.entries()){
     const x=points.length===1?width/2:left+i*(width-left-35)/(points.length-1);
-    draw('text',{x,y:164,'text-anchor':'middle',fill:'#4a5871'}).textContent=label;
+    if(i===points.length-1 || (i%Math.ceil(points.length/5)===0 && i<points.length-Math.ceil(points.length/10)))draw('text',{x,y:164,'text-anchor':'middle',fill:'#4a5871'}).textContent=label;
     if(v==null){paint();continue;}
     const y=bottom-(bottom-top)*v/max;segment.push([x,y]);markers.push({x,y,label,v});
   }
   paint();
   for(const {x,y,label,v} of markers){
-    const dot=draw('circle',{cx:x,cy:y,r:5,fill:color,stroke:'white','stroke-width':2});
+    const dot=draw('circle',{cx:x,cy:y,r:points.length>25?2.5:4,fill:'white',stroke:color,'stroke-width':2});
     draw('title',{},dot).textContent=label+' · '+(percent?pct(v):v+' шт.');
-    draw('text',{x,y:y-8,'text-anchor':'middle',fill:color}).textContent=percent?pct(v):v;
+    if(points.length<=12)draw('text',{x,y:y-8,'text-anchor':'middle',fill:color}).textContent=percent?pct(v):v;
   }
   box.append(svg);
 }
@@ -158,7 +158,7 @@ function stageColor(name,index){
   return stageColors[found<0?index%stageColors.length:found];
 }
 function selectStage(key){
-  activeStage=activeStage===key?undefined:key;
+  riskFilter=null;zone='';activeStage=activeStage===key?undefined:key;
   render();$('regTitle').scrollIntoView({block:'nearest'});
 }
 function renderStages(rows,complete,now){
@@ -183,20 +183,48 @@ function renderStages(rows,complete,now){
     button.setAttribute('aria-pressed',activeStage===key?'true':'false');
     button.setAttribute('aria-label',label+' · '+size+' · показать в реестре');
     button.onclick=()=>selectStage(key);
-    button.append(elem('span',label),elem('strong',size));
+    const heading=elem('span',label);heading.className='stage-heading';
+    const values=elem('div');values.className='stage-count';
+    values.append(elem('strong',size),elem('small',pct(Math.round(share*10)/10)));
+    button.append(heading,values);
     const deadlines=Model.stageDeadlines(batch,now);
     for(const [caption,count] of deadlines){
       const item=elem('span');item.className='stage-line';
       const track=elem('i'),fill=elem('i');
       if(count!=null){fill.style.width=100*count/size+'%';track.append(fill);}
-      item.append(elem('span',caption),track,elem('b',fmt(count)));button.append(item);
+      item.append(elem('span',caption),track,elem('b',fmt(count)),elem('small',count==null?'—':pct(Math.round(count*1000/size)/10)));button.append(item);
     }
     cards.append(button);
   }
   donut.style.background='conic-gradient('+stops.join(',')+')';
-  box.append(donut,legend);
+  const reset=elem('button',activeStage===undefined?'Все стадии выбраны':'Сбросить выбор стадии');
+  reset.disabled=activeStage===undefined;
+  reset.onclick=()=>selectStage(activeStage);
+  box.append(donut,legend,reset);
 }
 
+let riskFilter=null;
+function riskGroups(rows,now,complete){
+  const overdue=r=>Model.zones['Просрочено'](r,now);
+  const days=r=>(Date.parse(Model.day(now))-Date.parse(Model.day(r.due)))/86400000;
+  const definitions=[['Все просроченные',overdue]];
+  for(const stage of [...new Set(rows.filter(r=>overdue(r)===true).map(r=>r.stage))].filter(Boolean).sort()){
+    definitions.push(['Просрочено · '+stage,r=>r.stage===stage?overdue(r):false]);
+  }
+  definitions.push(['Просрочка до 7 дней',r=>{const late=overdue(r);return late===true?days(r)<=7:late;}],
+    ['Более 7 дней',r=>Model.overdueWeek(r,now)]);
+  const box=$('riskChips');box.replaceChildren();
+  let selected;
+  for(const [label,test] of definitions){
+    const b=elem('button');b.append(elem('span',label),elem('b',complete?confirmedCount(Model.tally(rows,test)):Model.missing));
+    b.setAttribute('aria-pressed',riskFilter===label);
+    if(riskFilter===label)selected=test;
+    b.onclick=()=>{riskFilter=riskFilter===label?null:label;zone='';activeStage=undefined;render();$('registry').scrollIntoView();};
+    box.append(b);
+  }
+  if(!selected)riskFilter=null;
+  return selected;
+}
 function overviewCharts(rows,complete,now){
 
   const statuses=new Map(),stages=new Map();
@@ -245,6 +273,7 @@ function render(){
   if(activeStage!==undefined&&!rows.some(r=>(r.stage||null)===activeStage))activeStage=undefined;
   $('csv').disabled=!complete;
   const obsolete=renderCards(rows,complete,now);
+  $('volume').textContent=(complete?'':'Загружено · ')+'Поручений: '+rows.length+scope.filter(g=>results.get(g.id)?.at).map(g=>' · '+g.name+' '+dt(results.get(g.id).at).split(',')[0]).join('');
   portfolio(rows,scope,complete,obsolete);
   renderStages(rows,complete,now);
   const attentionLabel='Просрочка более 7 дней';
@@ -254,7 +283,7 @@ function render(){
   $('attentionOpen').setAttribute('aria-pressed',zone===attentionLabel?'true':'false');
   $('attentionOpen').onclick=()=>{
     activeStage=undefined;
-    zone=zone===attentionLabel?'':attentionLabel;
+    riskFilter=null;zone=zone===attentionLabel?'':attentionLabel;
     render();$('regTitle').scrollIntoView({block:'nearest'});
   };
   for(const button of $('periodButtons').querySelectorAll('[data-period]')){
@@ -269,9 +298,10 @@ function render(){
   $('zones').replaceChildren(...Object.entries(Model.zones).map(([label,fn])=>{
     const values=rows.map(r=>fn(r,now)),n=values.filter(x=>x===true).length,u=values.filter(x=>x==null).length;
     const b=elem('button',label+' · '+(u===values.length&&u?'Нет данных':complete||n?n:'—')+(u?' (+'+u+' без данных)':''));
-    b.setAttribute('aria-pressed',zone===label);b.onclick=()=>{zone=zone===label?'':label;render();};return b;
+    b.setAttribute('aria-pressed',zone===label);b.onclick=()=>{riskFilter=null;zone=zone===label?'':label;render();};return b;
   }));
-  const shown=rows.filter(r=>(!zone||Model.zones[zone](r,now)===true)&&(activeStage===undefined||(r.stage||null)===activeStage));
+  const risk=riskGroups(rows,now,complete);
+  const shown=rows.filter(r=>(!risk||risk(r)===true)&&(!zone||Model.zones[zone](r,now)===true)&&(activeStage===undefined||(r.stage||null)===activeStage));
   Registry.update(shown,now,complete,openDetail,syncWidth);
   const series=items=>complete?Model.series(items,histories,scope.map(g=>g.id),$('period').value):[];
   const points=series(rows);plot(points);
@@ -329,7 +359,7 @@ $('lower').onscroll=()=>{$('upper').scrollLeft=$('lower').scrollLeft;};
 new ResizeObserver(syncWidth).observe($('lower').querySelector('table'));
 for(const g of groups)$('group').add(new Option(g.name,g.id));
 for(const id of [...fields,'period'])$(id).oninput=render;
-$('clear').onclick=()=>{for(const id of fields)$(id).value='';zone='';activeStage=undefined;render();};
+$('clear').onclick=()=>{for(const id of fields)$(id).value='';zone='';riskFilter=null;activeStage=undefined;render();};
 $('csv').onclick=downloadRegistry;
 $('periodButtons').onclick=e=>{
   const button=e.target.closest('[data-period]');

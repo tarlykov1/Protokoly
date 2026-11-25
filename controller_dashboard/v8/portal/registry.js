@@ -81,7 +81,8 @@ const Registry = (() => {
       title.className = 'registry-task';
       title.textContent = '#' + row.id + ' ' + (row.title || '');
       title.addEventListener('click', () => openTask(row));
-      tr.insertCell().append(title);
+      const cell=value=>{const td=tr.insertCell();td.textContent=fmt(value);return td;};
+      cell(dt(row.assigned));cell(dt(row.due));
       const badges = tr.insertCell();
       badges.className = 'registry-signals';
       for (const { text, tone } of signals) {
@@ -92,10 +93,14 @@ const Registry = (() => {
       }
       if (!signals.length) badges.textContent = unknown ? 'Нет данных' : '—';
       const state = { open: 'В работе', done: 'Исполнено', obsolete: 'Неактуально' }[row.state];
-      for (const value of [row.document, row.event, row.groupName, row.responsible, row.accomplices,
-        row.assistants, row.leader, row.manager, row.stage, dt(row.due), state, row.reaction, row.unread]) {
-        tr.insertCell().textContent = fmt(value);
-      }
+      const responsible=cell(row.responsible);
+      if(row.accomplices?.length)responsible.append(elem('small','Соисполнители: '+row.accomplices.join(', ')));
+      cell(row.assistants);
+      const task=tr.insertCell();
+      task.className='registry-document';
+      task.append(elem('b',fmt(row.document)),title);
+      cell(row.reaction==null?'Нет данных':row.reaction?'Есть комментарий':'Комментария нет');
+      for(const value of [row.event,row.groupName,row.leader,row.manager,row.stage,state,row.unread])cell(value);
       fragment.append(tr);
     }
     body.replaceChildren(fragment);
