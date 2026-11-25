@@ -49,7 +49,8 @@ with tempfile.TemporaryDirectory() as tmp:
             args = parse_qs(route.request.post_data)
             group = int(args["group"][0])
             op = args["op"][0]
-            if op=="group": requests_by_group.append(group)
+            if op == "group":
+                requests_by_group.append(group)
             if op == "detail":
                 result = {
                     "comments": [
