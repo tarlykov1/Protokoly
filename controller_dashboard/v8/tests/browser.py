@@ -41,6 +41,7 @@ with tempfile.TemporaryDirectory() as tmp:
         errors, marked = [], []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         failed = False
+        batch_size = 1
 
         def api(route):
             args = parse_qs(route.request.post_data)
@@ -79,7 +80,7 @@ with tempfile.TemporaryDirectory() as tmp:
                 }
                 result = {
                     "status": "ready",
-                    "rows": [row],
+                    "rows": [dict(row, id=group+i*100) for i in range(batch_size)],
                     "history": {"2026-10-27": {str(group): row["state"]}},
                     "checked": "2026-10-27T10:00:00Z",
                     "at": "2026-10-27T09:00:00Z",
@@ -88,6 +89,8 @@ with tempfile.TemporaryDirectory() as tmp:
 
         page.route("**/api.php", api)
         page.goto(f"http://127.0.0.1:{server.server_port}")
+        expect(page.locator("#loadSummary")).to_have_text("Данные загружены · готово 2 из 2")
+        assert page.locator("#loadProgress").evaluate("e=>e.value===e.max && e.max===2")
         expect(page.locator("#registryMode")).to_have_value("problems")
         expect(page.locator("#registryOrder")).to_have_value("risk")
         expect(page.locator("#body tr")).to_have_count(1)
@@ -142,7 +145,11 @@ with tempfile.TemporaryDirectory() as tmp:
         page.locator("#registryReset").click()
         page.locator("#person").fill("Соисполнитель")
         expect(page.locator("#body tr")).to_have_count(1)
-        page.locator("#body button").click()
+        page.evaluate("window.BX={SidePanel:{Instance:{open(url){window.openedTask=url;return true;}}}}")
+        page.locator("#body a.registry-task").click()
+        assert page.evaluate("window.openedTask")=="/company/personal/user/0/tasks/task/view/1/"
+        assert not page.locator("dialog").is_visible()
+        page.locator("#body button.registry-history").click()
         expect(page.locator("dialog")).to_contain_text("Комментарий проверки")
         page.wait_for_function(
             "document.querySelector('#body tr td:last-child').textContent==='Нет'"
@@ -154,8 +161,23 @@ with tempfile.TemporaryDirectory() as tmp:
         page.wait_for_function("document.querySelector('#lower').scrollLeft===130")
         page.locator("#lower").evaluate("e=>{e.scrollLeft=65;}")
         page.wait_for_function("document.querySelector('#upper').scrollLeft===65")
+        batch_size = 100
+        page.locator("#refresh").click()
+        expect(page.locator("#body tr")).to_have_count(200)
+        for width in (390,1366):
+            page.set_viewport_size({"width":width,"height":844})
+            scroll = page.locator("#lower")
+            assert scroll.evaluate("e=>e.clientHeight<=innerHeight*.56+1 && e.scrollHeight>e.clientHeight")
+            scroll.evaluate("e=>{e.scrollTop=500;e.scrollLeft=e.scrollWidth;}")
+            page.wait_for_function("Math.abs(upper.scrollLeft-lower.scrollLeft)<=1 && lower.scrollTop>0")
+            assert scroll.evaluate("e=>Math.abs(e.querySelector('th').getBoundingClientRect().top-e.getBoundingClientRect().top)<2")
+            if page.locator("#scrollBottomRange").is_visible():
+                page.locator("#scrollBottomRange").evaluate("e=>{e.value=100;e.dispatchEvent(new Event('input'));}")
+                page.wait_for_function("lower.scrollLeft===100 && upper.scrollLeft===100")
+        batch_size = 1
         failed = True
         page.locator("#refresh").click()
+        expect(page.locator("#loadSummary")).to_have_text("Загрузка завершена с ошибками · готово 1 из 2 · ошибок 1")
         expect(page.locator("#sources")).to_contain_text("Источник недоступен")
         expect(page.locator("#kpis strong").first).to_have_text("Нет данных")
         expect(page.locator("#dueGraph")).to_contain_text("Ожидаются данные")

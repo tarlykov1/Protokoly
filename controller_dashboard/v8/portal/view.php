@@ -3,12 +3,23 @@ if (!isset($public,$csrf)) { http_response_code(403); exit; }
 ?>
 <!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Кабинет контролёра</title><link rel="stylesheet" href="style.css?rev=stages4"></head>
+<title>Кабинет контролёра</title>
+<?php
+if (class_exists('CJSCore') && isset($GLOBALS['APPLICATION'])) {
+    CJSCore::Init(['sidepanel']);
+    $GLOBALS['APPLICATION']->ShowHead();
+}
+?><link rel="stylesheet" href="style.css?rev=task7"></head>
 <body><main>
 <h1 class="sr-only">Кабинет контролёра</h1>
 <section id="filters" class="filters">
   <header class="toolbar"><details class="freshness"><summary>Актуальность данных</summary><p id="sources" role="status"></p></details>
     <div class="actions"><span id="volume"></span><a class="registry-link" href="#registry">Реестр поручений</a><button id="refresh">Обновить</button><button id="csv" class="primary">Скачать CSV</button></div></header>
+  <div class="load-status" id="loadStatus">
+    <div><b id="loadSummary" role="status">Загрузка групп…</b><small id="loadTime"></small></div>
+    <progress id="loadProgress" aria-labelledby="loadSummary" max="1" value="0"></progress>
+    <small id="loadGroup"></small>
+  </div>
   <div class="filter-grid">
     <label>Тип документа<select id="source"><option value="">Все документы</option><option value="memo">МЕМО</option><option value="protocol">Протоколы</option></select></label>
     <label>Исполнитель или соисполнитель<input id="person" type="search" list="people" placeholder="Поиск по ФИО"></label><datalist id="people"></datalist>
@@ -48,10 +59,13 @@ if (!isset($public,$csrf)) { http_response_code(403); exit; }
   <div class="registry-tools"><div class="registry-summary"><b id="registryCount" aria-live="polite"></b><small>По умолчанию – проблемные</small></div><label>Поиск в реестре<input type="search" id="registryQuery" placeholder="Найти среди выбранных задач"></label>
     <label>Показать<select id="registryMode"><option value="all">Все поручения</option><option value="problems" selected>Требуют внимания</option><option value="overdue">Просроченные</option></select></label>
     <label>Порядок<select id="registryOrder"><option value="source">Как в источнике</option><option value="risk" selected>Сначала проблемные</option><option value="due">По сроку</option><option value="assigned">По дате поручения</option></select></label></div>
-  <div id="upper"><div></div></div><div id="lower" class="scroll"><table><thead><tr>
+  <div id="upper" tabindex="0" role="region" aria-label="Верхняя горизонтальная прокрутка"><div></div></div>
+  <input type="range" class="scroll-fallback" id="scrollTopRange" aria-label="Горизонтальная прокрутка сверху" min="0" max="0" value="0" hidden>
+  <div id="lower" class="scroll" tabindex="0" role="region" aria-label="Строки реестра поручений"><table><thead><tr>
 <?php foreach (['Дата поручения','Крайний срок','Сигналы','Ответственный / соисполнители','Помощник','Поручение / документ','Действия контролёра','Мероприятие','Группа','Руководитель в задаче','Руководитель по оргструктуре','Стадия','Состояние','Новый комментарий'] as $s) echo '<th>'.$s.'</th>'; ?>
   </tr></thead><tbody id="body"></tbody></table></div>
+  <input type="range" class="scroll-fallback" id="scrollBottomRange" aria-label="Горизонтальная прокрутка снизу" min="0" max="0" value="0" hidden>
 </section>
 <dialog id="detail"><button id="close">Закрыть</button><article></article></dialog></main>
-<script id="config" type="application/json"><?=json_encode(['groups'=>$public,'csrf'=>$csrf],JSON_HEX_TAG|JSON_HEX_AMP|JSON_THROW_ON_ERROR)?></script>
-<script src="model.js?rev=stages4"></script><script src="registry.js?rev=stages4"></script><script src="ui.js?rev=stages4"></script></body></html>
+<script id="config" type="application/json"><?=json_encode(['groups'=>$public,'csrf'=>$csrf,'userId'=>(int)(isset($GLOBALS['USER']) ? $GLOBALS['USER']->GetID() : 0)],JSON_HEX_TAG|JSON_HEX_AMP|JSON_THROW_ON_ERROR)?></script>
+<script src="model.js?rev=task7"></script><script src="registry.js?rev=task7"></script><script src="ui.js?rev=task7"></script></body></html>

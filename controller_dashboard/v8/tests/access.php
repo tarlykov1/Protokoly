@@ -14,7 +14,8 @@ namespace {
         function GetID(){return 17;}
         function IsAdmin(){return ($GLOBALS['argv'][1] ?? '')==='admin';}
     };
-    $groups=[1=>'МЕМО',2=>'Протокол'];
+    $groups=protocolGroups8([1=>'МЕМО'],['protocol_group_ids'=>[1,'2',2,0,'invalid']]);
+    if(array_keys($groups)!==[1,2] || $groups[1]!=='МЕМО' || $groups[2]['source']!=='protocol') exit(1);
     $allowed=access8($user,$groups,$argv[1]==='other' ? [] : [17=>true]);
     if($argv[1]==='member' && array_keys($allowed)!==[2]) exit(1);
     if($argv[1]==='admin' && $allowed!==$groups) exit(1);

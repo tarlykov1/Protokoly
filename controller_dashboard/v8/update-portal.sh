@@ -23,4 +23,13 @@ tar -czf "$backup/portal.tar.gz" -C "$dir" "${existing[@]}"
 echo "Откат: bash '$rollback'"
 trap 'bash "$rollback"' ERR
 for f in "${files[@]}"; do install -m 0644 "$src/portal/$f" "$dir/$f"; done
+legacy="$(dirname "$dir")/controller-dashboard/config.php"
+php -r '
+    $path=$argv[1];
+    if(!is_readable($path)){echo "Список групп прежнего кабинета недоступен. Используется настройка /etc/controller-v8/portal.php.\n";exit;}
+    $cfg=require $path;
+    require $argv[2];
+    $groups=protocolGroups8([], $cfg);
+    echo $groups ? "Групп протоколов в прежнем кабинете: ".count($groups)."\n" : "В прежнем кабинете список protocol_group_ids пуст. Используется настройка /etc/controller-v8/portal.php.\n";
+' "$legacy" "$dir/common.php"
 echo 'Кабинет обновлён.'

@@ -1,7 +1,7 @@
 'use strict';
 const codes={1:'Новая',2:'Ожидает выполнения',3:'Выполняется',4:'Ждёт контроля',5:'Завершена',6:'Отложена',7:'Отклонена'};
 const $=id=>document.getElementById(id);
-const {groups,csrf}=JSON.parse($('config').textContent);
+const {groups,csrf,userId:portalUser}=JSON.parse($('config').textContent);
 const fields=['source','group','event','person','query','from','until','dueFrom','dueTo'];
 const results=new Map();let zone='',activeStage,generation=0;
 function elem(tag,value){const el=document.createElement(tag);if(value!==undefined)el.textContent=value;return el;}
@@ -23,20 +23,55 @@ async function api(op,group,more={}){
 async function load(){
   const gen=++generation;results.clear();render();$('refresh').disabled=true;
   // Sequential requests avoid bursts against the production reporting source.
-  const waiting=[...groups];
-  for(let attempt=0;waiting.length&&attempt<45;attempt++){
-    for(const g of [...waiting]){
-      if(gen!==generation)return;
-      try{
-        const data=await api('group',g.id,{poll:attempt}); results.set(g.id,data);
-        if(data.status==='ready')waiting.splice(waiting.indexOf(g),1);
-      }catch(e){results.set(g.id,{status:'error',error:e.message});waiting.splice(waiting.indexOf(g),1);}
-      render();
-    }
-    if(waiting.length)await new Promise(resolve=>setTimeout(resolve,4000));
+  const waiting=[...groups], started=Date.now();
+  let current='', finished=false;
+  const duration=seconds=>seconds<60?seconds+' с':Math.floor(seconds/60)+' мин '+seconds%60+' с';
+  function progress(){
+    if(gen!==generation)return;
+    const ready=[...results.values()].filter(r=>r.status==='ready').length;
+    const failed=[...results.values()].filter(r=>r.status==='error').length;
+    const processed=ready+failed, remaining=groups.length-processed;
+    const elapsed=Math.floor((Date.now()-started)/1000);
+    const bar=$('loadProgress');
+    bar.max=groups.length||1;bar.value=processed;
+    $('loadStatus').classList.toggle('has-errors',failed>0);
+    $('loadSummary').textContent=(finished?(failed?'Загрузка завершена с ошибками':'Данные загружены'):'Загрузка данных')+
+      ' · готово '+ready+' из '+groups.length+(failed?' · ошибок '+failed:'');
+    let time='Прошло '+duration(elapsed);
+    if(!finished && remaining>0)time+=ready && elapsed
+      ? ' · осталось примерно '+duration(Math.max(1,Math.round(elapsed*remaining/processed)))
+      : ' · оцениваем время';
+    $('loadTime').textContent=time;
+    $('loadGroup').textContent=finished?(failed?'Подробности в разделе «Актуальность данных».':''):
+      (current?'Запрос · '+current:'Ожидаем подготовки отчётов');
   }
-  for(const g of waiting)results.set(g.id,{status:'error',error:'Отчёт ещё не готов. Повторите обновление.'});
-  $('refresh').disabled=false; render();
+  progress();
+  const timer=setInterval(progress,1000);
+  try{
+    for(let attempt=0;waiting.length&&attempt<45;attempt++){
+      for(const g of [...waiting]){
+        if(gen!==generation)return;
+        current=g.name;progress();
+        try{
+          const data=await api('group',g.id,{poll:attempt});
+          if(gen!==generation)return;
+          results.set(g.id,data);
+          if(data.status==='ready')waiting.splice(waiting.indexOf(g),1);
+        }catch(e){
+          if(gen!==generation)return;
+          results.set(g.id,{status:'error',error:e.message});waiting.splice(waiting.indexOf(g),1);
+        }
+        progress();render();
+      }
+      current='';
+      if(waiting.length&&attempt<44){progress();await new Promise(resolve=>setTimeout(resolve,4000));}
+    }
+    for(const g of waiting)results.set(g.id,{status:'error',error:'Отчёт ещё не готов. Повторите обновление.'});
+    finished=true;progress();render();
+  }finally{
+    clearInterval(timer);
+    if(gen===generation)$('refresh').disabled=false;
+  }
 }
 function plot(points, target='chart', percent=true){
   const box=$(target); box.replaceChildren();
@@ -378,10 +413,31 @@ function downloadRegistry(){
   link.href=url;link.download='Реестр поручений '+Model.day(Date.now())+'.csv';
   document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-function syncWidth(){$('upper').firstElementChild.style.width=$('lower').scrollWidth+'px';}
-$('upper').onscroll=()=>{$('lower').scrollLeft=$('upper').scrollLeft;};
-$('lower').onscroll=()=>{$('upper').scrollLeft=$('lower').scrollLeft;};
-new ResizeObserver(syncWidth).observe($('lower').querySelector('table'));
+const upperScroll=$('upper'),rowScroll=$('lower');
+const scrollRanges=[$('scrollTopRange'),$('scrollBottomRange')];
+function syncWidth(){
+  const width=rowScroll.clientWidth;
+  upperScroll.style.width=width+'px';
+  upperScroll.firstElementChild.style.width=rowScroll.scrollWidth+'px';
+  const max=rowScroll.scrollWidth-width;
+  const overlay=upperScroll.offsetHeight-upperScroll.clientHeight===0;
+  for(const range of scrollRanges){
+    range.hidden=!overlay||max<=0;
+    range.max=max;range.value=rowScroll.scrollLeft;
+    range.style.setProperty('--thumb-width', Math.max(6,100*width/(rowScroll.scrollWidth||1))+'%');
+  }
+  upperScroll.classList.toggle('overlay-scroll',overlay);
+  upperScroll.scrollLeft=rowScroll.scrollLeft;
+}
+upperScroll.onscroll=()=>{rowScroll.scrollLeft=upperScroll.scrollLeft;};
+rowScroll.onscroll=()=>{
+  upperScroll.scrollLeft=rowScroll.scrollLeft;
+  for(const range of scrollRanges)range.value=rowScroll.scrollLeft;
+};
+for(const range of scrollRanges)range.oninput=()=>{rowScroll.scrollLeft=Number(range.value);};
+const registrySize=new ResizeObserver(syncWidth);
+registrySize.observe(rowScroll.querySelector('table'));
+registrySize.observe(rowScroll);
 for(const g of groups)$('group').add(new Option(g.name,g.id));
 for(const id of fields)$(id).oninput=()=>{$('registryMode').value='all';render();};
 $('period').oninput=render;

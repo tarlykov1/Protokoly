@@ -63,6 +63,16 @@ function assistantPairs8($cfg) {
     }
     return $pairs;
 }
+function protocolGroups8($groups,$legacy) {
+    $ids=$legacy['protocol_group_ids'] ?? [];
+    if (!is_array($ids)) return $groups;
+    foreach ($ids as $value) {
+        if (!is_int($value) && !is_string($value)) continue;
+        $id=filter_var($value,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
+        if ($id && !isset($groups[$id])) $groups[$id]=['source'=>'protocol','name'=>'Протоколы · группа '.$id];
+    }
+    return $groups;
+}
 function context8() {
     global $USER;
     if (!$USER || !$USER->IsAuthorized()) fail8(401,'Войдите в Битрикс24');
@@ -74,7 +84,9 @@ function context8() {
         fail8(503,'Для связи с удалённым сервисом требуется HTTPS');
     $controllers=roster8(91,306);
     foreach ($cfg['technical_ids'] ?? [] as $id) unset($controllers[$id]);
-    $groups=access8($USER,$cfg['groups'],$controllers);
+    $legacyPath=$_SERVER['DOCUMENT_ROOT'].'/controller-dashboard/config.php';
+    $legacy=is_readable($legacyPath) ? require $legacyPath : [];
+    $groups=access8($USER,protocolGroups8($cfg['groups'],$legacy),$controllers);
     return [$cfg,(int)$USER->GetID(),$groups,$controllers];
 }
 function access8($USER,$groups,$controllers) {

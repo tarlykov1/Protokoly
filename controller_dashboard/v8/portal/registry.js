@@ -35,6 +35,24 @@ const Registry = (() => {
     return { signals, unknown };
   }
 
+  function openBitrixTask(event) {
+    if(event.button!==0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)return;
+    let host=window;
+    while(true){
+      let parent;
+      try{
+        parent=host.parent;
+        if(parent===host || parent.location.origin!==location.origin)break;
+      }catch{break;}
+      host=parent;
+    }
+    const panel=host.BX?.SidePanel?.Instance || window.BX?.SidePanel?.Instance;
+    if(panel && panel.open(event.currentTarget.pathname,{cacheable:false})!==false){
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
   function dateOrder(a, b, descending = false) {
     const first = Date.parse(a), second = Date.parse(b);
     if (!Number.isFinite(first)) return Number.isFinite(second) ? 1 : 0;
@@ -77,10 +95,12 @@ const Registry = (() => {
     for (const { row, signals, unknown, overdue } of items) {
       const tr = document.createElement('tr');
       if (overdue) tr.classList.add('registry-overdue');
-      const title = document.createElement('button');
+      const title = document.createElement('a');
       title.className = 'registry-task';
       title.textContent = '#' + row.id + ' ' + (row.title || '');
-      title.addEventListener('click', () => openTask(row));
+      title.href='/company/personal/user/'+portalUser+'/tasks/task/view/'+Number(row.id)+'/';
+      title.target='_blank';title.rel='noopener';
+      title.addEventListener('click',openBitrixTask);
       const cell=value=>{const td=tr.insertCell();td.textContent=fmt(value);return td;};
       const shortDate=value=>value?dt(value).split(',')[0]:Model.missing;
       cell(shortDate(row.assigned));
@@ -117,6 +137,10 @@ const Registry = (() => {
         ? (row.reaction==null?'Нет данных':row.reaction?'Есть комментарий':'Комментария нет')
         : 'Реакция в этом месяце: '+row.controller_comments_month+' комм.');
       if(row.last_controller_comment_at)actions.append(elem('small','Последний: '+shortDate(row.last_controller_comment_at)));
+      const history=elem('button','История поручения');
+      history.type='button';history.className='registry-history';
+      history.addEventListener('click',()=>openTask(row));
+      actions.append(history);
       for(const value of [row.event,row.groupName,row.leader,row.manager,row.stage,state,row.unread])cell(value);
       fragment.append(tr);
     }
