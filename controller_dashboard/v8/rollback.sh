@@ -13,7 +13,7 @@ if [[ "$1" == backend ]]; then
 fi
 if [[ "$1" == portal ]]; then
   # Remove only the files owned by this release.
-  for file in index.php view.php api.php common.php data.php model.js ui.js style.css .controller-v8; do rm -f -- "$dest/$file"; done
+  for file in index.php view.php api.php common.php data.php model.js registry.js ui.js style.css .controller-v8; do rm -f -- "$dest/$file"; done
   rmdir "$dest"
 else
   mv -T "$dest" "$dest.withdrawn.$(date +%s)"
