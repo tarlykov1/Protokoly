@@ -42,6 +42,7 @@ with tempfile.TemporaryDirectory() as tmp:
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         failed = False
         batch_size = 1
+        first_load = True
 
         def api(route):
             args = parse_qs(route.request.post_data)
@@ -61,6 +62,9 @@ with tempfile.TemporaryDirectory() as tmp:
             elif op == "mark":
                 marked.append(group)
                 result = {"ok": True}
+            elif first_load and group == 2 and args.get("poll")==["0"]:
+                route.fulfill(json={"status":"queued"})
+                return
             elif group == 2 and failed:
                 route.fulfill(status=503, json={"error": "Источник недоступен"})
                 return
@@ -90,7 +94,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
         page.route("**/api.php", api)
         page.goto(f"http://127.0.0.1:{server.server_port}")
-        expect(page.locator("#loadSummary")).to_have_text("Данные загружены · готово 2 из 2")
+        expect(page.locator("#partialScope")).to_contain_text("1 из 2")
+        expect(page.locator("#kpis strong").first).to_have_text("100 %")
+        expect(page.locator("#csv")).to_be_disabled()
+        expect(page.locator("#loadSummary")).to_have_text("Данные загружены · готово 2 из 2", timeout=10000)
+        expect(page.locator("#partialScope")).to_be_hidden()
+        first_load = False
         assert page.locator("#loadProgress").evaluate("e=>e.value===e.max && e.max===2")
         expect(page.locator("#registryMode")).to_have_value("problems")
         expect(page.locator("#registryOrder")).to_have_value("risk")

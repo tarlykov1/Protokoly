@@ -11,7 +11,8 @@ function fmt(v){
   if(typeof v==='boolean')return v?'Да':'Нет';
   return String(v);
 }
-const dt=v=>v?new Date(v).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}):Model.missing;
+const timestampFormat=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+const dt=v=>v && Number.isFinite(Date.parse(v))?timestampFormat.format(new Date(v)):Model.missing;
 const pct=v=>v==null?Model.missing:v.toLocaleString('ru-RU')+' %';
 async function api(op,group,more={}){
   const res=await fetch('api.php',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
@@ -38,7 +39,7 @@ async function load(){
     $('loadSummary').textContent=(finished?(failed?'Загрузка завершена с ошибками':'Данные загружены'):'Загрузка данных')+
       ' · готово '+ready+' из '+groups.length+(failed?' · ошибок '+failed:'');
     let time='Прошло '+duration(elapsed);
-    if(!finished && remaining>0)time+=ready && elapsed
+    if(!finished && remaining>0)time+=ready>=2 && elapsed
       ? ' · осталось примерно '+duration(Math.max(1,Math.round(elapsed*remaining/processed)))
       : ' · оцениваем время';
     $('loadTime').textContent=time;
@@ -61,7 +62,8 @@ async function load(){
           if(gen!==generation)return;
           results.set(g.id,{status:'error',error:e.message});waiting.splice(waiting.indexOf(g),1);
         }
-        progress();render();
+        progress();
+        if(['ready','error'].includes(results.get(g.id)?.status))render();
       }
       current='';
       if(waiting.length&&attempt<44){progress();await new Promise(resolve=>setTimeout(resolve,4000));}
@@ -319,7 +321,7 @@ function render(changed=''){
   const f=Object.fromEntries(fields.map(k=>[k,$(k).value]));
   const histories={},all=[];
   $('sources').textContent=groups.map(g=>{
-    const v=results.get(g.id);return g.name+' · '+(v?.status==='ready'?'Выгрузка '+dt(v.at)+' · проверка задач '+dt(v.checked):v?.error||'Ожидается выгрузка');
+    const v=results.get(g.id);return g.name+' · '+(v?.status==='ready'?'Выгрузка '+dt(v.at)+' · проверка задач '+dt(v.checked)+(v.timing?' · получение среза '+v.timing.source+' с · обработка в Битрикс '+v.timing.portal+' с':''):v?.error||'Ожидается выгрузка');
   }).join('\n');
   for(const g of groups){
     const pack=results.get(g.id);if(pack?.status!=='ready')continue;
@@ -353,10 +355,14 @@ function render(changed=''){
   const rows=all.filter(r=>Model.match(r,f)),now=Date.now();
   if(activeStage!==undefined&&!rows.some(r=>displayStage(r)===activeStage))activeStage=undefined;
   $('csv').disabled=!complete;
-  const obsolete=renderCards(rows,complete,now);
+  const readyScope=scope.filter(g=>results.get(g.id)?.status==='ready');
+  const partial=!complete && readyScope.length>0 && !scope.some(g=>results.get(g.id)?.status==='error');
+  $('partialScope').hidden=!partial;
+  $('partialScope').textContent=partial?'Предварительная сводка · загружено групп: '+readyScope.length+' из '+scope.length+'. Показатели рассчитаны по загруженным поручениям.':'';
+  const obsolete=renderCards(rows,complete||partial,now);
   $('volume').textContent=(complete?'':'Загружено · ')+'Поручений: '+rows.length+scope.filter(g=>results.get(g.id)?.at).map(g=>' · '+g.name+' '+dt(results.get(g.id).at).split(',')[0]).join('');
-  portfolio(rows,scope,complete,obsolete);
-  renderStages(rows,complete,now);
+  portfolio(rows,partial?readyScope:scope,complete||partial,obsolete);
+  renderStages(rows,complete||partial,now);
   const attentionLabel='Просрочка более 7 дней';
   const attention=Model.tally(rows,r=>Model.overdueWeek(r,now));
   $('attentionCount').textContent=complete?confirmedCount(attention):Model.missing;

@@ -38,13 +38,16 @@ try {
         $result=backend8($cfg,$uid,'/view',['task'=>$id,'marker'=>$marker,'channel'=>$cap['channel']]);
     } elseif($op==='group'){
         $pending=(!empty($_POST['poll'])) ? ($_SESSION['controller_v8_pending'][$uid][$group] ?? null) : null;
+        $begin=microtime(true);
         $source=backend8($cfg,$uid,'/source',['group'=>$group,'source'=>$spec['source'],'report'=>$pending]);
+        $sourceTime=microtime(true)-$begin;
         $_SESSION['controller_v8_pending'][$uid][$group]=$source['report'] ?? null;
         $result=['status'=>$source['status']];
         if($source['status']==='ready'){
             $seed=$source['tasks']; $tasks=tasks8(array_map('intval',array_keys($seed)),$group,$uid);
             $result+=assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers);
             $result['at']=$source['at'];
+            $result['timing']=['source'=>round($sourceTime,1),'portal'=>round(microtime(true)-$begin-$sourceTime,1)];
             $_SESSION['controller_v8_tasks'][$uid][$group]=array_fill_keys(array_keys($tasks),true);
         }
     } else fail8(400,'Неизвестная операция');

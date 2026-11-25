@@ -8,7 +8,7 @@ const Model = (() => {
     const between=(value,from,to)=>(!from&&!to)||(value&&(!from||value>=from)&&(!to||value<=to));
     return (!f.source||r.source===f.source)&&(!f.group||String(r.group)===f.group)&&includes(r.event,f.event)
       &&includes([r.responsible,...(r.accomplices||[])].join(' '),f.person)&&includes([r.id,r.title,r.document].join(' '),f.query)
-      &&between(day(r.assigned),f.from,f.until)&&between(day(r.due),f.dueFrom,f.dueTo);
+      &&((!f.from&&!f.until)||between(day(r.assigned),f.from,f.until))&&((!f.dueFrom&&!f.dueTo)||between(day(r.due),f.dueFrom,f.dueTo));
   }
   function ratio(n,d){return d ? Math.round(n*1000/d)/10 : null;}
   function discipline(states){

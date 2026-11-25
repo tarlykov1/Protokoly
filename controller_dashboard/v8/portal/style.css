@@ -86,3 +86,5 @@ main{gap:10px;padding:clamp(8px,1.1vw,17px)}section,.additional{padding:clamp(12
 .registry-task{display:block;color:#273c58;text-decoration:none;line-height:1.45}
 .registry-task:hover,.registry-task:focus-visible{text-decoration:underline;color:#285da9}
 .registry-history{display:block;margin-top:6px;color:#465f86;font-size:12px;text-decoration:underline;text-underline-offset:2px}
+
+#partialScope{margin:0 0 9px;color:#4b4984;font-size:13px;font-weight:600}
