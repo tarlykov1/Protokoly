@@ -9,7 +9,7 @@ if (class_exists('CJSCore') && isset($GLOBALS['APPLICATION'])) {
     CJSCore::Init(['sidepanel']);
     $GLOBALS['APPLICATION']->ShowHead();
 }
-?><link rel="stylesheet" href="style.css?rev=loading9"></head>
+?><link rel="stylesheet" href="style.css?rev=resume10"></head>
 <body><main>
 <h1 class="sr-only">Кабинет контролёра</h1>
 <section id="filters" class="filters">
@@ -18,7 +18,7 @@ if (class_exists('CJSCore') && isset($GLOBALS['APPLICATION'])) {
   <div class="load-status" id="loadStatus">
     <div><b id="loadSummary" role="status">Загрузка групп…</b><small id="loadTime"></small></div>
     <progress id="loadProgress" aria-labelledby="loadSummary" max="1" value="0"></progress>
-    <small id="loadGroup"></small>
+    <small id="loadGroup"></small><button id="resumeGroups" hidden>Загрузить оставшиеся группы</button>
   </div>
   <div class="filter-grid">
     <label>Тип документа<select id="source"><option value="">Все документы</option><option value="memo">МЕМО</option><option value="protocol">Протоколы</option></select></label>
@@ -68,4 +68,4 @@ if (class_exists('CJSCore') && isset($GLOBALS['APPLICATION'])) {
 </section>
 <dialog id="detail"><button id="close">Закрыть</button><article></article></dialog></main>
 <script id="config" type="application/json"><?=json_encode(['groups'=>$public,'csrf'=>$csrf,'userId'=>(int)(isset($GLOBALS['USER']) ? $GLOBALS['USER']->GetID() : 0)],JSON_HEX_TAG|JSON_HEX_AMP|JSON_THROW_ON_ERROR)?></script>
-<script src="model.js?rev=loading9"></script><script src="registry.js?rev=loading9"></script><script src="ui.js?rev=loading9"></script></body></html>
+<script src="model.js?rev=resume10"></script><script src="registry.js?rev=resume10"></script><script src="ui.js?rev=resume10"></script></body></html>

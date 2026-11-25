@@ -21,10 +21,14 @@ async function api(op,group,more={}){
   if(!res.ok||data.error)throw Error(data.error||'Ошибка '+res.status);
   return data;
 }
-async function load(){
-  const gen=++generation;results.clear();render();$('refresh').disabled=true;
+async function load(resume=false){
+  const gen=++generation;
+  const waiting=resume?groups.filter(g=>results.get(g.id)?.status!=='ready'):[...groups];
+  if(!resume)results.clear();
+  else for(const g of waiting)if(results.get(g.id)?.status==='error')results.delete(g.id);
+  $('resumeGroups').hidden=true;render();$('refresh').disabled=true;
   // Sequential requests avoid bursts against the production reporting source.
-  const waiting=[...groups], started=Date.now();
+  const started=Date.now(), initialReady=groups.length-waiting.length;
   let current='', finished=false;
   const duration=seconds=>seconds<60?seconds+' с':Math.floor(seconds/60)+' мин '+seconds%60+' с';
   function progress(){
@@ -36,11 +40,11 @@ async function load(){
     const bar=$('loadProgress');
     bar.max=groups.length||1;bar.value=processed;
     $('loadStatus').classList.toggle('has-errors',failed>0);
-    $('loadSummary').textContent=(finished?(failed?'Загрузка завершена с ошибками':'Данные загружены'):'Загрузка данных')+
+    $('loadSummary').textContent=(finished?(remaining?'Часть отчётов ещё готовится':failed?'Загрузка завершена с ошибками':'Данные загружены'):'Загрузка данных')+
       ' · готово '+ready+' из '+groups.length+(failed?' · ошибок '+failed:'');
     let time='Прошло '+duration(elapsed);
-    if(!finished && remaining>0)time+=ready>=2 && elapsed
-      ? ' · осталось примерно '+duration(Math.max(1,Math.round(elapsed*remaining/processed)))
+    if(!finished && remaining>0)time+=ready-initialReady>=2 && elapsed
+      ? ' · осталось примерно '+duration(Math.max(1,Math.round(elapsed*remaining/(processed-initialReady))))
       : ' · оцениваем время';
     $('loadTime').textContent=time;
     $('loadGroup').textContent=finished?(failed?'Подробности в разделе «Актуальность данных».':''):
@@ -49,12 +53,13 @@ async function load(){
   progress();
   const timer=setInterval(progress,1000);
   try{
-    for(let attempt=0;waiting.length&&attempt<45;attempt++){
+    for(let attempt=0;waiting.length;attempt++){
       for(const g of [...waiting]){
         if(gen!==generation)return;
         current=g.name;progress();
         try{
-          const data=await api('group',g.id,{poll:attempt});
+          const pending=['queued','processing'].includes(results.get(g.id)?.status);
+          const data=await api('group',g.id,{poll:pending?1:0});
           if(gen!==generation)return;
           results.set(g.id,data);
           if(data.status==='ready')waiting.splice(waiting.indexOf(g),1);
@@ -66,9 +71,10 @@ async function load(){
         if(['ready','error'].includes(results.get(g.id)?.status))render();
       }
       current='';
-      if(waiting.length&&attempt<44){progress();await new Promise(resolve=>setTimeout(resolve,4000));}
+      if(Date.now()-started>=15*60*1000)break;
+      if(waiting.length){progress();await new Promise(resolve=>setTimeout(resolve,attempt<8?4000:15000));}
     }
-    for(const g of waiting)results.set(g.id,{status:'error',error:'Отчёт ещё не готов. Повторите обновление.'});
+    $('resumeGroups').hidden=groups.every(g=>results.get(g.id)?.status==='ready');
     finished=true;progress();render();
   }finally{
     clearInterval(timer);
@@ -321,7 +327,7 @@ function render(changed=''){
   const f=Object.fromEntries(fields.map(k=>[k,$(k).value]));
   const histories={},all=[];
   $('sources').textContent=groups.map(g=>{
-    const v=results.get(g.id);return g.name+' · '+(v?.status==='ready'?'Выгрузка '+dt(v.at)+' · проверка задач '+dt(v.checked)+(v.timing?' · получение среза '+v.timing.source+' с · обработка в Битрикс '+v.timing.portal+' с':''):v?.error||'Ожидается выгрузка');
+    const v=results.get(g.id);return g.name+' · '+(v?.status==='ready'?'Выгрузка '+dt(v.at)+' · проверка задач '+dt(v.checked)+(v.timing?' · получение среза '+v.timing.source+' с · обработка в Битрикс '+v.timing.portal+' с':''):v?.error||(v?.status==='processing'?'Отчёт формируется':v?.status==='queued'?'Отчёт в очереди':'Ожидается выгрузка'));
   }).join('\n');
   for(const g of groups){
     const pack=results.get(g.id);if(pack?.status!=='ready')continue;
@@ -356,7 +362,7 @@ function render(changed=''){
   if(activeStage!==undefined&&!rows.some(r=>displayStage(r)===activeStage))activeStage=undefined;
   $('csv').disabled=!complete;
   const readyScope=scope.filter(g=>results.get(g.id)?.status==='ready');
-  const partial=!complete && readyScope.length>0 && !scope.some(g=>results.get(g.id)?.status==='error');
+  const partial=!complete && readyScope.length>0;
   $('partialScope').hidden=!partial;
   $('partialScope').textContent=partial?'Предварительная сводка · загружено групп: '+readyScope.length+' из '+scope.length+'. Показатели рассчитаны по загруженным поручениям.':'';
   const obsolete=renderCards(rows,complete||partial,now);
@@ -480,4 +486,4 @@ $('periodButtons').onclick=e=>{
   const button=e.target.closest('[data-period]');
   if(button){$('period').value=button.dataset.period;render();}
 };
-$('refresh').onclick=load;$('close').onclick=()=>$('detail').close();load();
+$('refresh').onclick=()=>load();$('resumeGroups').onclick=()=>load(true);$('close').onclick=()=>$('detail').close();load();

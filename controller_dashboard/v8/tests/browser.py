@@ -40,6 +40,7 @@ with tempfile.TemporaryDirectory() as tmp:
         page = browser.new_page(viewport={"width": 390, "height": 844})
         errors, marked = [], []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
+        requests_by_group=[]
         failed = False
         batch_size = 1
         first_load = True
@@ -48,6 +49,7 @@ with tempfile.TemporaryDirectory() as tmp:
             args = parse_qs(route.request.post_data)
             group = int(args["group"][0])
             op = args["op"][0]
+            if op=="group": requests_by_group.append(group)
             if op == "detail":
                 result = {
                     "comments": [
@@ -202,10 +204,16 @@ with tempfile.TemporaryDirectory() as tmp:
         page.locator("#refresh").click()
         expect(page.locator("#loadSummary")).to_have_text("Загрузка завершена с ошибками · готово 1 из 2 · ошибок 1")
         expect(page.locator("#sources")).to_contain_text("Источник недоступен")
-        expect(page.locator("#kpis strong").first).to_have_text("Нет данных")
+        expect(page.locator("#kpis strong").first).to_have_text("100 %")
         expect(page.locator("#dueGraph")).to_contain_text("Ожидаются данные")
         expect(page.locator("#csv")).to_be_disabled()
         expect(page.locator("#closedChart svg")).to_have_count(0)
+        failed=False
+        requests_by_group.clear()
+        page.locator("#resumeGroups").click()
+        expect(page.locator("#loadSummary")).to_have_text("Данные загружены · готово 2 из 2")
+        assert requests_by_group==[2]
+        expect(page.locator("#resumeGroups")).to_be_hidden()
         assert not errors, errors
         browser.close()
     server.shutdown()
