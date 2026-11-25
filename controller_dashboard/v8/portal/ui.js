@@ -1,9 +1,9 @@
-const codes={1:'Новая',2:'Ожидает выполнения',3:'Выполняется',4:'Ждёт контроля',5:'Завершена',6:'Отложена',7:'Отклонена'};
 'use strict';
+const codes={1:'Новая',2:'Ожидает выполнения',3:'Выполняется',4:'Ждёт контроля',5:'Завершена',6:'Отложена',7:'Отклонена'};
 const $=id=>document.getElementById(id);
 const {groups,csrf}=JSON.parse($('config').textContent);
 const fields=['source','group','event','person','query','from','until','dueFrom','dueTo'];
-const results=new Map();let zone='',generation=0;
+const results=new Map();let zone='',activeStage,generation=0;
 function elem(tag,value){const el=document.createElement(tag);if(value!==undefined)el.textContent=value;return el;}
 function fmt(v){
   if(v==null)return Model.missing;
@@ -87,19 +87,97 @@ function plot(points, target='chart', percent=true){
   }
   box.append(svg);
 }
-function chartBars(id,entries,complete,empty){
+function chartBars(id,entries,complete,empty,percent=false){
   const box=$(id);box.replaceChildren();
   if(!complete){box.append(elem('p','Ожидаются данные выбранных групп'));return;}
   if(!entries.length){box.append(elem('p',empty));return;}
-  const scale=Math.max(1,...entries.map(([,v])=>v||0));
+  const scale=percent?100:Math.max(1,...entries.map(([,v])=>v||0));
   for(const [name,value] of entries){
     const row=elem('div');row.className='bar-row';
-    const line=elem('div');line.className='bar-label';line.append(elem('span',name),elem('b',fmt(value)));
+    const line=elem('div');line.className='bar-label';line.append(elem('span',name),elem('b',percent?pct(value):fmt(value)));
     const track=elem('div');track.className='bar-track';
     if(value!=null){const fill=elem('i');fill.style.width=100*value/scale+'%';track.append(fill);}
     row.append(line,track);box.append(row);
   }
 }
+function renderCards(rows,complete,now){
+  const [discipline,onTime,obsolete]=Model.metrics(rows,complete);
+  const count=fn=>complete?Model.exactCount(rows,fn):null;
+  const cards=[
+    ['ИД · исполнено / актуальные',pct(discipline),'Неактуальные исключены из расчёта','discipline'],
+    ['Закрыты в срок / все исполненные',pct(onTime),'По крайнему сроку и дате закрытия','timeliness'],
+    ['Исполнено',fmt(count(r=>r.state==null?null:r.state==='done')),'По главному ответственному','done'],
+    ['Просрочено',fmt(count(r=>Model.zones['Просрочено'](r,now))),'Незавершённые поручения','overdue'],
+    ['Срок в ближайшие 5 дней',fmt(count(r=>Model.upcoming(r,now,5))),'Включая сегодняшний день','upcoming'],
+  ];
+  const box=$('kpis');
+  box.replaceChildren(...cards.map(([label,value,detail,tone])=>{
+    const item=elem('div');item.className='kpi-item kpi-'+tone;
+    item.append(elem('span',label),elem('strong',value),elem('small',detail));return item;
+  }));
+  if(!complete)box.append(elem('p','Неполный охват источников'));
+  return obsolete;
+}
+function portfolio(rows,scope,complete,obsolete){
+  const bySource=Model.groupRows(rows,r=>r.source);
+  const names={memo:'МЕМО',protocol:'Протоколы'};
+  const sources=[...new Set(scope.map(g=>g.source))];
+  chartBars('portfolio',sources.map(key=>[names[key]||key,bySource.get(key)?.length||0]),complete,'Нет доступных групп');
+  if(complete)$('portfolio').append(elem('p','Неактуальных поручений: '+fmt(obsolete)));
+  const groupsById=Model.groupRows(rows,r=>r.group);
+  const entries=scope.map(group=>[group.name,Model.discipline((groupsById.get(group.id)||[]).map(r=>r.state))]);
+  chartBars('groupDiscipline',entries,complete,'Нет доступных групп',true);
+}
+const stageColors=['#1398a5','#3976dc','#8764ce','#bd4b89','#24946d','#647388','#be7935'];
+function stageColor(name,index){
+  if(name==null)return '#8692a4';
+  const text=name.toLocaleLowerCase('ru');
+  const tags=['к выполнению','выполня','доработ','приём','выполнен','неактуал'];
+  if(text.includes('заверш'))return stageColors[4];
+  if(text.includes('прием'))return stageColors[3];
+  const found=tags.findIndex(tag=>text.includes(tag));
+  return stageColors[found<0?index%stageColors.length:found];
+}
+function selectStage(key){
+  activeStage=activeStage===key?undefined:key;
+  render();$('regTitle').scrollIntoView({block:'nearest'});
+}
+function renderStages(rows,complete,now){
+  const box=$('stageRing'),cards=$('stageCards');
+  box.replaceChildren();cards.replaceChildren();
+  if(!complete||!rows.length){
+    box.append(elem('p',complete?'Нет поручений по фильтрам':'Ожидаются данные выбранных групп'));return;
+  }
+  const grouped=Model.groupRows(rows,r=>r.stage||null);
+  const donut=elem('div'),total=elem('strong',rows.length),legend=elem('div'),stops=[];
+  donut.className='stage-donut';total.className='stage-total';legend.className='stage-legend';
+  donut.setAttribute('aria-hidden','true');donut.append(total);
+  let cumulative=0;
+  for(const [index,[key,batch]] of [...grouped].sort(([a],[b])=>(a||'').localeCompare(b||'','ru')).entries()){
+    const label=key||'Стадия не указана',color=stageColor(key,index);
+    const size=batch.length,share=100*size/rows.length;
+    stops.push(color+' '+cumulative+'% '+(cumulative+share)+'%');cumulative+=share;
+    const line=elem('div'),dot=elem('i'),button=elem('button');
+    dot.className='stage-dot';dot.style.background=color;
+    line.append(dot,elem('span',label),elem('b',size+' / '+pct(Math.round(share*10)/10)));legend.append(line);
+    button.type='button';button.className='stage-card';button.style.setProperty('--stage-color',color);
+    button.setAttribute('aria-pressed',activeStage===key?'true':'false');
+    button.setAttribute('aria-label',label+' · '+size+' · показать в реестре');
+    button.onclick=()=>selectStage(key);
+    button.append(elem('span',label),elem('strong',size));
+    const deadlines=Model.stageDeadlines(batch,now);
+    for(const [caption,count] of deadlines){
+      const item=elem('span');item.className='stage-line';
+      const track=elem('i'),fill=elem('i');
+      if(count!=null){fill.style.width=100*count/size+'%';track.append(fill);}
+      item.append(elem('span',caption),track,elem('b',fmt(count)));button.append(item);
+    }
+    cards.append(button);
+  }
+  donut.style.background='conic-gradient('+stops.join(',')+')';
+  box.append(donut,legend);
+}
+
 function overviewCharts(rows,complete,now){
 
   const statuses=new Map(),stages=new Map();
@@ -111,8 +189,8 @@ function overviewCharts(rows,complete,now){
   }
   const count=fn=>{const values=rows.map(fn);return values.some(v=>v==null)?null:values.filter(Boolean).length;};
   const dates=[['Просрочено',count(r=>Model.zones['Просрочено'](r,now))],
-    ['Срок сегодня',count(r=>r.state==null?null:r.state==='open'&&!!r.due&&Model.day(r.due)===Model.day(now))],
-    ['Ближайшие 7 суток',count(r=>r.state==null?null:r.state==='open'&&!!r.due&&Date.parse(r.due)>=now&&Date.parse(r.due)<=now+7*86400000)]];
+    ['Срок сегодня',count(r=>Model.zones['Срок сегодня'](r,now))],
+    ['Ближайшие 7 суток',count(r=>Model.upcoming(r,now,7))]];
   chartBars('statusGraph',[...statuses],complete,'Нет поручений по фильтрам');
   chartBars('dueGraph',dates,complete,'Нет поручений');
   chartBars('stageGraph',[...stages].sort((a,b)=>b[1]-a[1]),complete,'Нет подтверждённых просрочек в выборке');
@@ -145,11 +223,23 @@ function render(){
   }
   options('people',all.flatMap(r=>[r.responsible,...r.accomplices]));options('events',all.map(r=>r.event));
   const rows=all.filter(r=>Model.match(r,f)),now=Date.now();
-  const metrics=Model.metrics(rows,complete);
-  $('kpis').replaceChildren(...['ИД · исполнено / актуальные','Закрыты в срок / все исполненные','Неактуальные поручения'].map((label,i)=>{
-    const el=elem('div',label);el.append(elem('strong',i<2?pct(metrics[i]):fmt(metrics[i])));return el;
-  }));
-  if(!complete)$('kpis').append(elem('p','Неполный охват источников'));
+  if(activeStage!==undefined&&!rows.some(r=>(r.stage||null)===activeStage))activeStage=undefined;
+  $('csv').disabled=!complete;
+  const obsolete=renderCards(rows,complete,now);
+  portfolio(rows,scope,complete,obsolete);
+  renderStages(rows,complete,now);
+  const attentionLabel='Просрочка более 7 дней';
+  const attention=complete?Model.exactCount(rows,r=>Model.overdueWeek(r,now)):null;
+  $('attentionCount').textContent=fmt(attention);
+  $('attentionOpen').setAttribute('aria-pressed',zone===attentionLabel?'true':'false');
+  $('attentionOpen').onclick=()=>{
+    activeStage=undefined;
+    zone=zone===attentionLabel?'':attentionLabel;
+    render();$('regTitle').scrollIntoView({block:'nearest'});
+  };
+  for(const button of $('periodButtons').querySelectorAll('[data-period]')){
+    button.setAttribute('aria-pressed',button.dataset.period===$('period').value?'true':'false');
+  }
   overviewCharts(rows,complete,now);
   plot(complete?closedSeries(rows,$('period').value):[], 'closedChart', false);
   $('zones').replaceChildren(...Object.entries(Model.zones).map(([label,fn])=>{
@@ -157,15 +247,8 @@ function render(){
     const b=elem('button',label+' · '+(u===values.length&&u?'Нет данных':complete||n?n:'—')+(u?' (+'+u+' без данных)':''));
     b.setAttribute('aria-pressed',zone===label);b.onclick=()=>{zone=zone===label?'':label;render();};return b;
   }));
-  const shown=rows.filter(r=>!zone||Model.zones[zone](r,now)===true);
-  $('regTitle').textContent='Реестр поручений · '+shown.length+(complete?'':' по загруженным группам');
-  $('body').replaceChildren(...shown.map(r=>{
-    const tr=elem('tr'),b=elem('button','#'+r.id+' '+(r.title||''));b.onclick=()=>openDetail(r);
-    const td=elem('td');td.append(b);tr.append(td);
-    for(const v of [r.document,r.event,r.groupName,r.responsible,r.accomplices,r.assistants,r.leader,r.manager,r.stage,dt(r.due),
-      {open:'В работе',done:'Исполнено',obsolete:'Неактуально'}[r.state],r.reaction,r.unread])tr.append(elem('td',fmt(v)));
-    return tr;
-  }));
+  const shown=rows.filter(r=>(!zone||Model.zones[zone](r,now)===true)&&(activeStage===undefined||(r.stage||null)===activeStage));
+  Registry.update(shown,now,complete,openDetail,syncWidth);
   const series=items=>complete?Model.series(items,histories,scope.map(g=>g.id),$('period').value):[];
   const points=series(rows);plot(points);
   const table=elem('table'),header=elem('tr');header.append(elem('th','Главный ответственный'));
@@ -195,9 +278,20 @@ async function openDetail(r){
   catch(e){pending.textContent=e.message;return;}
   if(request!==detailRequest||!$('detail').open)return;
   pending.remove();
-  if(!detail.comments?.length)content.append(elem('p',detail.comments?'Комментариев нет':Model.missing));
+  if(!detail.comments?.length)content.append(elem('p',detail.comments?'Комментариев нет':detail.comments_status==='ambiguous'?'У задачи неоднозначная связь с источником комментариев. Уточните источник в настройках группы.':'Источник комментариев недоступен'));
   for(const c of detail.comments||[])content.append(elem('strong',c.author+' · '+dt(c.at)),elem('p',c.text));
   if(detail.marker!=null)api('mark',r.group,{task:r.id,marker:detail.marker}).then(()=>{r.unread=false;render();}).catch(e=>content.append(elem('p',e.message)));
+}
+function downloadRegistry(){
+  const headers=['ID','Поручение','Документ','Мероприятие','Группа','Ответственный','Соисполнители','Помощники',
+    'Руководитель в задаче','Руководитель по оргструктуре','Стадия','Статус Битрикс24','Срок','Состояние','Реакция контролёра','Новый комментарий'];
+  const lines=[headers,...Registry.visibleRows().map(r=>[r.id,r.title,r.document,r.event,r.groupName,r.responsible,
+    fmt(r.accomplices),fmt(r.assistants),r.leader,r.manager,r.stage,codes[r.status],dt(r.due),
+    {open:'В работе',done:'Исполнено',obsolete:'Неактуально'}[r.state],fmt(r.reaction),fmt(r.unread)])];
+  const blob=new Blob(['\uFEFF',lines.map(line=>line.map(Model.csvCell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=elem('a');
+  link.href=url;link.download='Реестр поручений '+Model.day(Date.now())+'.csv';
+  document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function syncWidth(){$('upper').firstElementChild.style.width=$('lower').scrollWidth+'px';}
 $('upper').onscroll=()=>{$('lower').scrollLeft=$('upper').scrollLeft;};
@@ -205,5 +299,10 @@ $('lower').onscroll=()=>{$('upper').scrollLeft=$('lower').scrollLeft;};
 new ResizeObserver(syncWidth).observe($('lower').querySelector('table'));
 for(const g of groups)$('group').add(new Option(g.name,g.id));
 for(const id of [...fields,'period'])$(id).oninput=render;
-$('clear').onclick=()=>{for(const id of fields)$(id).value='';zone='';render();};
+$('clear').onclick=()=>{for(const id of fields)$(id).value='';zone='';activeStage=undefined;render();};
+$('csv').onclick=downloadRegistry;
+$('periodButtons').onclick=e=>{
+  const button=e.target.closest('[data-period]');
+  if(button){$('period').value=button.dataset.period;render();}
+};
 $('refresh').onclick=load;$('close').onclick=()=>$('detail').close();load();

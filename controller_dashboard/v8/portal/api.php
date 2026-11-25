@@ -8,31 +8,34 @@ try {
     if($_SERVER['REQUEST_METHOD']!=='POST' || !check_bitrix_sessid()) fail8(403,'Сессия истекла');
     $op=$_POST['op'] ?? ''; $group=(int)($_POST['group'] ?? 0);
     if(!isset($groups[$group])) fail8(403,'Нет прав на группу');
-    $spec=$groups[$group]; $channel=$spec['comments_source'] ?? $cfg['comments_source'] ?? 'unknown';
+    $spec=$groups[$group]; $mode=$spec['comments_source'] ?? $cfg['comments_source'] ?? null;
     if($op==='detail'){
         $id=(int)($_POST['task'] ?? 0);
         if(!isset($_SESSION['controller_v8_tasks'][$uid][$group][$id])) fail8(403,'Поручение не входит в реестр');
         $task=tasks8([$id],$group,$uid);
         if(!isset($task[$id])) fail8(403,'Нет доступа к задаче');
-        $messages=messages8($task,$channel);
-        $result=['comments'=>null,'marker'=>null];
+        $channels=[]; $reasons=[];
+        unset($_SESSION['controller_v8_comment_cap'][$uid][$group][$id]);
+        $messages=messages8($task,$mode,true,$channels,$reasons);
+        $result=['comments'=>null,'marker'=>null,'comments_status'=>$reasons[$id] ?? 'unavailable'];
         if(isset($messages[$id])){
             $items=$messages[$id];
             [$names]=employees8(array_column($items,'AUTHOR_ID'));
             $comments=[]; $last=0;
             foreach($items as $m){
-                if(!empty($m['SERVICE_TYPE']) || $m['NEW_TOPIC']==='Y') continue;
+                if(!humanComment8($m)) continue;
                 $author=(int)$m['AUTHOR_ID']; $last=(int)$m['ID'];
                 $comments[]=['author'=>$names[$author] ?? ('ID '.$author),'at'=>iso8($m['POST_DATE']),'text'=>(string)$m['POST_MESSAGE']];
             }
-            $result=['comments'=>$comments,'marker'=>$last];
-            $_SESSION['controller_v8_shown'][$uid][$group][$channel][$id]=$last;
+            $channel=$channels[$id];
+            $result=['comments'=>$comments,'marker'=>$last,'comments_source'=>$channel,'comments_status'=>'ready'];
+            $_SESSION['controller_v8_comment_cap'][$uid][$group][$id]=['channel'=>$channel,'marker'=>$last];
         }
     } elseif($op==='mark'){
         $id=(int)($_POST['task'] ?? 0); $marker=filter_var($_POST['marker'] ?? null,FILTER_VALIDATE_INT);
-        $cap=$_SESSION['controller_v8_shown'][$uid][$group][$channel][$id] ?? null;
-        if($marker===false || $cap===null || $marker>$cap || !tasks8([$id],$group,$uid)) fail8(403,'Нет доступа к отметке');
-        $result=backend8($cfg,$uid,'/view',['task'=>$id,'marker'=>$marker,'channel'=>$channel]);
+        $cap=$_SESSION['controller_v8_comment_cap'][$uid][$group][$id] ?? null;
+        if($marker===false || $marker<0 || $cap===null || $marker!==$cap['marker'] || !tasks8([$id],$group,$uid)) fail8(403,'Нет доступа к отметке');
+        $result=backend8($cfg,$uid,'/view',['task'=>$id,'marker'=>$marker,'channel'=>$cap['channel']]);
     } elseif($op==='group'){
         $pending=(!empty($_POST['poll'])) ? ($_SESSION['controller_v8_pending'][$uid][$group] ?? null) : null;
         $source=backend8($cfg,$uid,'/source',['group'=>$group,'source'=>$spec['source'],'report'=>$pending]);

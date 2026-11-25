@@ -61,27 +61,58 @@ function chatMessages8($chat,$detail) {
     } while(count($batch)===50);
     ksort($messages,SORT_NUMERIC); return $messages;
 }
-function messages8($tasks,$mode,$detail=false) {
-    $out=[];
-    if($mode==='chat'){
-        if(!\Bitrix\Main\Loader::includeModule('im')) return [];
-        $map=related8(\Bitrix\Im\Model\ChatTable::class,'ENTITY_ID',array_keys($tasks),
-            ['ID','ENTITY_ID'],['=ENTITY_TYPE'=>'TASKS_TASK']);
-        foreach($map as $task=>$chats) if(count($chats)===1) {
-            try {$out[$task]=chatMessages8((int)$chats[0]['ID'],$detail);}
-            catch(Throwable $e){$out[$task]=null;}
+// Resolve only containers linked to tasks that passed tasks8() for this user.
+function messages8($tasks,$mode,$detail=false,&$channels=[],&$reasons=[]) {
+    $out=[]; $channels=[]; $reasons=[];
+    $mode=$mode ?? 'auto';
+    if(!in_array($mode,['auto','forum','chat'],true) || !$tasks) return [];
+    $chats=[]; $topics=[]; $ids=array_keys($tasks);
+    try {
+        if($mode!=='forum' && \Bitrix\Main\Loader::includeModule('im')) {
+            $chats=related8(\Bitrix\Im\Model\ChatTable::class,'ENTITY_ID',$ids,
+                ['ID','ENTITY_ID'],['=ENTITY_TYPE'=>'TASKS_TASK']);
         }
-        return $out;
+        if($mode!=='chat' && \Bitrix\Main\Loader::includeModule('forum')) {
+            foreach(array_chunk($ids,200) as $chunk) {
+                $keys=[];
+                foreach($chunk as $task) $keys['TASK_'.$task]=$task;
+                $rs=\Bitrix\Forum\TopicTable::getList(['select'=>['ID','XML_ID'],
+                    'filter'=>['@XML_ID'=>array_keys($keys)]]);
+                while($r=$rs->fetch()) if(isset($keys[$r['XML_ID']]))
+                    $topics[$keys[$r['XML_ID']]][]=(int)$r['ID'];
+            }
+        }
+    } catch(Throwable $e) { return []; }
+    $forum=[];
+    foreach($tasks as $id=>$task) {
+        $f=$topics[$id] ?? []; $c=$chats[$id] ?? [];
+        $linked=(int)($task['FORUM_TOPIC_ID'] ?? 0);
+        if(count($f)>1 || count($c)>1 || ($mode!=='chat' && $linked && $f!==[$linked]) || ($f && $c)) {
+            $reasons[$id]='ambiguous'; continue;
+        }
+        if($f) {
+            $forum[$id]=$f[0];
+        } elseif($c) {
+            try { $items=chatMessages8((int)$c[0]['ID'],$detail); }
+            catch(Throwable $e) { $items=null; }
+            if(is_array($items)) { $out[$id]=$items; $channels[$id]='chat'; }
+        }
     }
-    if($mode!=='forum' || !\Bitrix\Main\Loader::includeModule('forum')) return [];
-    $topics=array_filter(array_column($tasks,'FORUM_TOPIC_ID'));
+    if(!$forum) return $out;
     $fields=['TOPIC_ID','ID','AUTHOR_ID','POST_DATE','SERVICE_TYPE','NEW_TOPIC'];
     if($detail) $fields[]='POST_MESSAGE';
-    $byTopic=related8(MessageTable::class,'TOPIC_ID',$topics,$fields,
-        ['=APPROVED'=>'Y'],['ID'=>'ASC']);
-    foreach($tasks as $task=>$r) if(array_key_exists('FORUM_TOPIC_ID',$r))
-        $out[$task]=$byTopic[(int)$r['FORUM_TOPIC_ID']] ?? [];
+    try {
+        $byTopic=related8(MessageTable::class,'TOPIC_ID',$forum,$fields,
+            ['=APPROVED'=>'Y'],['ID'=>'ASC']);
+        foreach($forum as $id=>$topic) {
+            $out[$id]=$byTopic[$topic] ?? [];
+            $channels[$id]='forum';
+        }
+    } catch(Throwable $e) { /* Keep independently verified chat results. */ }
     return $out;
+}
+function humanComment8($row) {
+    return (int)($row['AUTHOR_ID'] ?? 0)>0 && empty($row['SERVICE_TYPE']) && ($row['NEW_TOPIC'] ?? '')==='N';
 }
 function employees8($ids) {
     $ids=array_values(array_unique(array_filter($ids))); $names=[]; $depts=[];
@@ -110,7 +141,10 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
             } catch(Throwable $failure){$logs[$id]=null;}
         }
     }
-    try {$messages=messages8($tasks,$spec['comments_source'] ?? $cfg['comments_source'] ?? null);}catch(Throwable $e){$messages=null;}
+    $channels=[]; $reasons=[];
+    $messages=messages8($tasks,$spec['comments_source'] ?? $cfg['comments_source'] ?? null,false,$channels,$reasons);
+    $knownChannels=array_unique(array_values($channels));
+    $observeChannel=count($knownChannels)===1 ? reset($knownChannels) : 'unknown';
     $users=array_column($tasks,'RESPONSIBLE_ID');
     foreach($members as $list) foreach($list as $m) $users[]=$m['USER_ID'];
     foreach($logs as $events) foreach($events ?? [] as $event) $users[]=(int)$event['USER_ID'];
@@ -147,7 +181,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
         if(isset($messages[$id])){
             $last=0; $reaction=$controllers===null ? null : false;
             foreach($messages[$id] as $m){
-                if(!empty($m['SERVICE_TYPE']) || $m['NEW_TOPIC']==='Y') continue;
+                if(!humanComment8($m)) continue;
                 $aid=(int)$m['AUTHOR_ID']; $last=(int)$m['ID']; $commentAt=iso8($m['POST_DATE']);
                 if(isset($controllers[$aid])) $reaction=true;
 
@@ -161,11 +195,12 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
           'observed_by_controller'=>$controllers===null ? null : (bool)array_intersect($aud,array_keys($controllers)),
           'accomplices'=>names8($acc,$names),'assistants'=>$assistants===null ? null : names8(array_intersect(array_unique(array_merge($acc,$aud)),array_keys($assistants[$resp] ?? [])),$names),
           'leader'=>$meta['leader'] ? ($names[$meta['leader']] ?? 'ID '.$meta['leader']) : null,
-          'manager'=>$managers ? names8(array_unique($managers),$names) : null,'history'=>$h,'reaction'=>$reaction,'last_comment'=>$last];
+          'manager'=>$managers ? names8(array_unique($managers),$names) : null,'history'=>$h,'reaction'=>$reaction,'last_comment'=>$last,
+          'comments_source'=>$channels[$id] ?? null,'comments_status'=>$reasons[$id] ?? (isset($channels[$id]) ? 'ready' : 'unavailable')];
         $observations[]= ['id'=>$id,'state'=>$state,'assigned'=>$assigned,'started'=>$h['started'] ?? null,
-           'history_known'=>$h!==null && ($h['started'] || ($h['creation'] && $state==='open')),'activity'=>$activity,'last_comment'=>$last];
+           'history_known'=>$h!==null && ($h['started'] || ($h['creation'] && $state==='open')),'activity'=>$activity,'last_comment'=>($channels[$id] ?? null)===$observeChannel ? $last : null];
     }
-    $ob=backend8($cfg,$uid,'/observe',['group'=>$group,'rows'=>$observations,'channel'=>$spec['comments_source'] ?? $cfg['comments_source'] ?? 'unknown']);
+    $ob=backend8($cfg,$uid,'/observe',['group'=>$group,'rows'=>$observations,'channel'=>$observeChannel]);
     foreach($rows as &$row) $row+=$ob['extra'][$row['id']];
     return ['rows'=>$rows,'history'=>$ob['history'],'checked'=>$ob['at']];
 }

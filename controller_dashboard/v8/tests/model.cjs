@@ -15,3 +15,24 @@ test('последний сопоставимый срез периода',()=>{
  const r=[{group:1,id:2},{group:2,id:3}], h={1:{'2026-10-01':{2:'open'},'2026-10-27':{2:'done'}},2:{'2026-10-27':{3:'open'}}};
  for(const p of ['week','month','quarter','year'])assert.equal(m.series(r,h,[1,2],p)[0][1],50);
 });
+test('неизвестный срок и состояние не превращаются в нулевую просрочку',()=>{
+ const now=Date.parse('2026-11-25T09:00:00+03:00'), due=m.zones['Просрочено'];
+ assert.equal(due({state:'open',due:null},now),null);
+ assert.equal(m.overdueWeek({state:'open',due:'2026-11-17T23:50:00+03:00'},now),true);
+ assert.equal(m.overdueWeek({state:'open',due:'2026-11-18T00:01:00+03:00'},now),false);
+ assert.equal(m.overdueWeek({state:'done',due:null},now),false);
+ assert.equal(m.upcoming({state:'open',due:'2026-11-30T23:59:00+03:00'},now,5),true);
+ assert.equal(m.exactCount([{state:'done'},{state:null}],r=>due(r,now)),null);
+ assert.equal(m.exactCount([],r=>due(r,now)),0);
+});
+test('CSV экранирует текст из задач и не выполняет формулы',()=>{
+ assert.equal(m.csvCell('=1+1'),'"\'=1+1"');
+ assert.equal(m.csvCell('Он сказал "да"'),'"Он сказал ""да"""');
+ assert.equal(m.csvCell(null),'"Нет данных"');
+ assert.equal(m.csvCell('  @external'),'"\'  @external"');
+});
+test('детализация закрытых по срокам не приписывает отсутствующей дате своевременность',()=>{
+ const task={state:'done',due:'2026-11-23T17:00:00+03:00',closed:'2026-11-24T11:00:00+03:00'};
+ assert.deepEqual(m.stageDeadlines([task],Date.now()).map(r=>r[1]),[1,0]);
+ assert.deepEqual(m.stageDeadlines([task,{...task,closed:null}],Date.now()).map(r=>r[1]),[null,null]);
+});

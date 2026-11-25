@@ -1,7 +1,8 @@
 'use strict';
 const Model = (() => {
   const missing='Нет данных';
-  const day=v=>v && new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date(v));
+  const dateFormat=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'});
+  const day=v=>v && dateFormat.format(new Date(v));
   const includes=(a,b)=>String(a??'').toLocaleLowerCase('ru').includes(b.toLocaleLowerCase('ru'));
   function match(r,f){
     const between=(value,from,to)=>(!from&&!to)||(value&&(!from||value>=from)&&(!to||value<=to));
@@ -22,9 +23,55 @@ const Model = (() => {
       ratio(done.filter(r=>Date.parse(r.closed)<=Date.parse(r.due)).length,done.length),
       unknown?null:rows.filter(r=>r.state==='obsolete').length];
   }
+  // Missing status or date leaves the answer unknown. Closed tasks carry no current risk.
+  function openDeadline(row,predicate){
+    if(row.state==null)return null;
+    if(row.state!=='open')return false;
+    const due=Date.parse(row.due);
+    return Number.isFinite(due)?predicate(due):null;
+  }
+  function exactCount(rows,predicate){
+    let count=0;
+    for(const row of rows){
+      const value=predicate(row);
+      if(value==null)return null;
+      if(value)count++;
+    }
+    return count;
+  }
+  // Compare Moscow calendar days separately from the precise time of the deadline.
+  const intervalDays=(start,end)=>(Date.parse(day(end))-Date.parse(day(start)))/86400000;
+  const upcoming=(r,now,days)=>openDeadline(r,due=>due>=now&&intervalDays(now,due)<=days);
+  const overdueWeek=(r,now)=>openDeadline(r,due=>intervalDays(due,now)>7);
+  function stageDeadlines(rows,now){
+    if(rows.every(r=>r.state==='done')){
+      const closedByDue=r=>{
+        const due=Date.parse(r.due),closed=Date.parse(r.closed);
+        return Number.isFinite(due)&&Number.isFinite(closed)?closed<=due:null;
+      };
+      const onTime=exactCount(rows,closedByDue);
+      return [['Закрыто с просрочкой',onTime==null?null:rows.length-onTime],['Закрыто в срок',onTime]];
+    }
+    return [
+      ['Срок истёк',exactCount(rows,r=>openDeadline(r,due=>due<now))],
+      ['Срок не истёк',exactCount(rows,r=>openDeadline(r,due=>due>=now))],
+    ];
+  }
+  function groupRows(rows,key){
+    const by=new Map();
+    for(const row of rows){
+      const label=key(row);
+      if(!by.has(label))by.set(label,[]);
+      by.get(label).push(row);
+    }
+    return by;
+  }
   const zones={
-    'Просрочено':(r,now)=>r.state==='open'?(r.due?Date.parse(r.due)<now:false):r.state==null?null:false,
-    'Ждёт контроля':r=>r.status==='4','Срок сегодня':(r,now)=>r.state==='open'&&day(r.due)===day(now),
+    'Просрочено':(r,now)=>openDeadline(r,due=>due<now),
+    'Ждёт контроля':r=>r.status==null?null:r.status==='4',
+    'Срок сегодня':(r,now)=>openDeadline(r,due=>day(due)===day(now)),
+    'Срок в ближайшие 5 дней':(r,now)=>upcoming(r,now,5),
+    'Просрочка более 7 дней':overdueWeek,
     'Внесены изменения':r=>r.history?r.history.changes.length>0:null,
     'Без активности более 7 рабочих дней':r=>r.state==='open'?r.inactive:r.state==null?null:false,
     'Неоднократный перенос срока':r=>r.history?r.history.moves>=2:null,
@@ -52,6 +99,12 @@ const Model = (() => {
     }
     return [...byPeriod];
   }
-  return {bucket,missing,day,match,metrics,zones,series,discipline};
+  function csvCell(value){
+    let text=value==null?missing:String(value);
+    // Excel may evaluate task titles and names that begin with a formula marker.
+    if(/^[\s]*[=+@-]|^[\t\r\n]/.test(text))text="'"+text;
+    return '"'+text.replace(/"/g,'""')+'"';
+  }
+  return {stageDeadlines,csvCell,bucket,missing,day,match,metrics,zones,series,discipline,exactCount,groupRows,upcoming,overdueWeek};
 })();
 if(typeof module!=='undefined') module.exports=Model;

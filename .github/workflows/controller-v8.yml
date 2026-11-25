@@ -23,6 +23,7 @@ jobs:
           node --test tests/model.cjs
           node --check portal/ui.js
           for file in portal/*.php portal.example.php; do php -l "$file"; done
+          php tests/comments.php
           php tests/history.php
           test "$(php tests/access.php member)" = OK
           test "$(php tests/access.php admin)" = OK
@@ -43,6 +44,19 @@ jobs:
           bash rollback.sh portal /tmp/testportal
           test ! -e /tmp/testportal/controller-v8
           test -f /tmp/testportal/bitrix/modules/main/include/prolog_before.php
+      - name: Update existing portal and restore previous files
+        run: |
+          root=$(mktemp -d)
+          backup=$(mktemp -d)
+          dir="$root/controller"
+          mkdir "$dir"
+          for f in cabinet.php index.php common.php data.php api.php model.js ui.js style.css view.php; do echo "original $f" > "$dir/$f"; done
+          BITRIX_ROOT="$root" BACKUP_DIR="$backup" bash /tmp/release/controller-v8/update-portal.sh
+          cmp "$dir/registry.js" /tmp/release/controller-v8/portal/registry.js
+          test "$(cat "$dir/index.php")" = 'original index.php'
+          bash "$backup"/controller-portal-*/rollback.sh
+          test "$(cat "$dir/data.php")" = 'original data.php'
+          test ! -e "$dir/registry.js"
       - name: Exercise isolated backend installation and rollback
         shell: bash
         run: |

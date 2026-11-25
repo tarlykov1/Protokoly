@@ -1,5 +1,6 @@
 """Exercise the production PHP template and assets with synthetic group responses."""
 
+import csv
 import json
 import os
 import subprocess
@@ -27,7 +28,7 @@ $csrf='test';require $argv[1];""",
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     (root / "index.html").write_bytes(html)
-    for f in ("model.js", "ui.js", "style.css"):
+    for f in ("model.js", "registry.js", "ui.js", "style.css"):
         (root / f).write_bytes((ROOT / "portal" / f).read_bytes())
     server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=tmp))
     worker = threading.Thread(target=server.serve_forever, daemon=True)
@@ -68,8 +69,8 @@ with tempfile.TemporaryDirectory() as tmp:
                     "title": "Поручение " + str(group),
                     "state": "done" if group == 1 else "open",
                     "accomplices": ["Соисполнитель"] if group == 1 else [],
-                    "due": None,
-                    "stage": "Проверка",
+                    "due": None if group == 1 else "2000-01-01T10:00:00Z",
+                    "stage": "Завершена" if group == 1 else "На доработке",
                     "status": "5" if group == 1 else "3",
                     "closed": "2026-10-27T12:00:00Z" if group == 1 else None,
                     "responsible": "Исполнитель " + str(group),
@@ -92,6 +93,40 @@ with tempfile.TemporaryDirectory() as tmp:
         expect(page.locator("#statusGraph")).to_contain_text("Завершена")
         expect(page.locator("#closedChart svg")).to_have_count(1)
         expect(page.locator("#controlGraph")).to_contain_text("Нет данных")
+        expect(page.locator("#portfolio")).to_contain_text("МЕМО")
+        expect(page.locator("#groupDiscipline")).to_contain_text("Протоколы")
+        expect(page.locator("#stageRing .stage-total")).to_have_text("2")
+        expect(page.locator("#kpis .kpi-timeliness strong")).to_have_text("Нет данных")
+        expect(page.locator("#attentionCount")).to_have_text("1")
+        for width in (390, 1366):
+            page.set_viewport_size({"width": width, "height": 840})
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.locator("#attentionOpen").click()
+        expect(page.locator("#body tr")).to_have_count(1)
+        expect(page.locator("#body")).to_contain_text("Поручение 2")
+        page.locator("#attentionOpen").click()
+        stage = page.locator("#stageCards button").filter(has_text="На доработке")
+        stage.click()
+        expect(page.locator("#body tr")).to_have_count(1)
+        expect(page.locator("#body")).to_contain_text("Поручение 2")
+        stage.click()
+        page.locator("#periodButtons [data-period=month]").click()
+        expect(page.locator("#period")).to_have_value("month")
+        page.locator("#registryMode").select_option("overdue")
+        expect(page.locator("#body tr")).to_have_count(1)
+        expect(page.locator("#kpis strong").first).to_have_text("50 %")
+        with page.expect_download() as pending:
+            page.locator("#csv").click()
+        exported = pending.value.path()
+        with exported.open(encoding="utf-8-sig", newline="") as handle:
+            records = list(csv.reader(handle, delimiter=";"))
+        assert len(records) == 2 and records[1][:2] == ["2", "Поручение 2"]
+        page.locator("#registryReset").click()
+        page.locator("#registryQuery").fill("#1")
+        expect(page.locator("#body tr")).to_have_count(1)
+        expect(page.locator("#body")).to_contain_text("Поручение 1")
+        page.locator("#registryReset").click()
         page.locator("#person").fill("Соисполнитель")
         expect(page.locator("#body tr")).to_have_count(1)
         page.locator("#body button").click()
@@ -111,6 +146,7 @@ with tempfile.TemporaryDirectory() as tmp:
         expect(page.locator("#sources")).to_contain_text("Источник недоступен")
         expect(page.locator("#kpis strong").first).to_have_text("Нет данных")
         expect(page.locator("#dueGraph")).to_contain_text("Ожидаются данные")
+        expect(page.locator("#csv")).to_be_disabled()
         expect(page.locator("#closedChart svg")).to_have_count(0)
         assert not errors, errors
         browser.close()
