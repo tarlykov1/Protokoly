@@ -12,7 +12,7 @@ function related8($class,$key,$ids,$select,$filter=[], $order=[]) {
     }
     return $out;
 }
-function history8($logs,$responsible) {
+function history8($logs,$responsible,$delegates=[],$names=[]) {
     $creation=false; $started=null; $submitted=false; $dates=[]; $changes=[]; $moves=0;
     foreach($logs as $l) {
         $field=$l['FIELD']; $old=(string)$l['FROM_VALUE']; $new=(string)$l['TO_VALUE'];
@@ -20,8 +20,9 @@ function history8($logs,$responsible) {
         if(in_array($field,['NEW','CREATED_DATE'],true)) $creation=true;
         if($field==='STATUS') {
             if(in_array($new,['1','2','3','6','7'],true)) $submitted=false;
-            if((int)$l['USER_ID']===$responsible) {
-                if($new==='3' && !$started) $started=$at;
+            $actor=(int)$l['USER_ID'];
+            if($actor>0 && ($actor===$responsible || isset($delegates[$actor]))) {
+                if($actor===$responsible && $new==='3' && !$started) $started=$at;
                 if(in_array($new,['4','5'],true)) $submitted=true;
             }
         }
@@ -29,7 +30,12 @@ function history8($logs,$responsible) {
             $dates[]=['at'=>$at,'from'=>$old,'to'=>$new];
             if ($old!=='' && $new!=='' && $old!==$new) $moves++;
         }
-        if(!in_array($field,['COMMENT','NEW'],true)) $changes[]=['at'=>$at,'field'=>$field];
+        if(!in_array($field,['COMMENT','NEW'],true)) {
+            $author=(int)$l['USER_ID'];
+            $change=['at'=>$at,'field'=>$field,'author'=>$names[$author] ?? ($author ? 'ID '.$author : null)];
+            if($field==='STATUS') $change+=['from'=>$old,'to'=>$new];
+            $changes[]=$change;
+        }
     }
     return compact('creation','started','submitted','dates','moves','changes');
 }
@@ -107,6 +113,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
     try {$messages=messages8($tasks,$spec['comments_source'] ?? $cfg['comments_source'] ?? null);}catch(Throwable $e){$messages=null;}
     $users=array_column($tasks,'RESPONSIBLE_ID');
     foreach($members as $list) foreach($list as $m) $users[]=$m['USER_ID'];
+    foreach($logs as $events) foreach($events ?? [] as $event) $users[]=(int)$event['USER_ID'];
     foreach($seed as $r) if(ctype_digit((string)$r['leader'])) $users[]=$r['leader'];
     [$names,$departments]=employees8($users);
     $heads=[]; $org=(int)COption::GetOptionString('intranet','iblock_structure','0');
@@ -116,7 +123,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
         while($r=$rs->Fetch()) if(!empty($r['UF_HEAD'])) $heads[$r['ID']]=(int)$r['UF_HEAD'];
         $names+=employees8(array_values($heads))[0];
     }
-    $assistants=roster8(83,(int)($cfg['assistant_property'] ?? 0));
+    try { $assistants=assistantPairs8($cfg); } catch(Throwable $e) { $assistants=null; }
     $rows=[]; $observations=[];
     $stages=related8(StagesTable::class,'ID',array_filter(array_column($tasks,'STAGE_ID')),['ID','TITLE']);
     foreach($tasks as $id=>$r){
@@ -126,7 +133,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
             if($m['TYPE']==='U') $aud[]=(int)$m['USER_ID'];
         }
         $managers=[]; foreach($departments[$resp] ?? [] as $d) if(isset($heads[$d]) && $heads[$d]!==$resp) $managers[]=$heads[$d];
-        $h=array_key_exists($id,$logs) && $logs[$id]===null ? null : history8($logs[$id] ?? [],$resp);
+        $h=array_key_exists($id,$logs) && $logs[$id]===null ? null : history8($logs[$id] ?? [],$resp,$assistants[$resp] ?? [],$names);
         $stage=$stages[(int)$r['STAGE_ID']][0]['TITLE'] ?? $meta['stage'];
         $status=(string)($r['REAL_STATUS'] ?? $r['STATUS']);
         $state=null;
@@ -152,7 +159,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
           'state'=>$state,'stage'=>$stage,'status'=>$status,'due'=>iso8($r['DEADLINE']),'closed'=>iso8($r['CLOSED_DATE']),
           'assigned'=>$assigned,'responsible'=>$names[$resp] ?? ($resp ? 'ID '.$resp : null),'responsible_id'=>$resp,
           'observed_by_controller'=>$controllers===null ? null : (bool)array_intersect($aud,array_keys($controllers)),
-          'accomplices'=>names8($acc,$names),'assistants'=>$assistants===null ? null : names8(array_intersect($aud,array_keys($assistants)),$names),
+          'accomplices'=>names8($acc,$names),'assistants'=>$assistants===null ? null : names8(array_intersect(array_unique(array_merge($acc,$aud)),array_keys($assistants[$resp] ?? [])),$names),
           'leader'=>$meta['leader'] ? ($names[$meta['leader']] ?? 'ID '.$meta['leader']) : null,
           'manager'=>$managers ? names8(array_unique($managers),$names) : null,'history'=>$h,'reaction'=>$reaction,'last_comment'=>$last];
         $observations[]= ['id'=>$id,'state'=>$state,'assigned'=>$assigned,'started'=>$h['started'] ?? null,

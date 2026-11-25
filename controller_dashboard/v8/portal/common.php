@@ -26,6 +26,43 @@ function roster8($list, $property = 0) {
     }
     return $users ?: null;
 }
+// A list element pairs one responsible manager with one or more assistants.
+function assistantPairs8($cfg) {
+    if (!Loader::includeModule('iblock')) return null;
+    $roles=['manager'=>['Исполнитель (Ответственный руководитель)', (int)($cfg['manager_property'] ?? 0)],
+            'assistant'=>['Помощник', (int)($cfg['assistant_property'] ?? 0)]];
+    $fields=[];
+    $props=CIBlockProperty::GetList([], ['IBLOCK_ID'=>83,'ACTIVE'=>'Y']);
+    while ($p=$props->Fetch()) {
+        if ($p['USER_TYPE']!=='employee') continue;
+        foreach ($roles as $role=>[$name,$configured]) {
+            if ($configured ? (int)$p['ID']===$configured : trim($p['NAME'])===$name) {
+                if (isset($fields[$role])) return null;
+                $fields[$role]='PROPERTY_'.(int)$p['ID'];
+            }
+        }
+    }
+    if (count(array_unique($fields))!==2) return null;
+    $members=[];
+    foreach ($fields as $role=>$field) {
+        $rs=CIBlockElement::GetList([],['IBLOCK_ID'=>83,'ACTIVE'=>'Y'],false,false,['ID',$field]);
+        while ($r=$rs->Fetch()) {
+            if (!array_key_exists($field.'_VALUE',$r)) return null;
+            foreach ((array)$r[$field.'_VALUE'] as $user) {
+                if ($user===null || $user==='') continue;
+                if (!ctype_digit((string)$user) || (int)$user<=0) return null;
+                $members[$r['ID']][$role][(int)$user]=true;
+            }
+        }
+    }
+    $pairs=[];
+    foreach ($members as $row) {
+        if (count($row['manager'] ?? [])!==1) return null;
+        $manager=key($row['manager']);
+        $pairs[$manager]=($pairs[$manager] ?? [])+($row['assistant'] ?? []);
+    }
+    return $pairs;
+}
 function context8() {
     global $USER;
     if (!$USER || !$USER->IsAuthorized()) fail8(401,'Войдите в Битрикс24');

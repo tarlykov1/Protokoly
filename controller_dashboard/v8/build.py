@@ -14,6 +14,7 @@ def build(destination):
         "README.md",
         "install.sh",
         "rollback.sh",
+        "update-portal.sh",
         "portal.example.php",
         "controller-v8.service",
     ]:

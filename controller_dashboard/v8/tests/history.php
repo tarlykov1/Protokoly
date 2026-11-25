@@ -8,3 +8,10 @@ $logs[]=event8(10,'STATUS','3');$logs[]=event8(10,'STATUS','4');$logs[]=event8(2
 $h=history8($logs,10);
 if(!$h['submitted'] || !$h['started'] || $h['moves']!==1 || count($h['dates'])!==1)exit(1);
 $logs[]=event8(22,'STATUS','2');if(history8($logs,10)['submitted'])exit(1);
+
+// Submission by a listed delegate survives acceptance by another account.
+$logs=[event8(22,'STATUS','4','3'),event8(30,'STATUS','5','4')];
+if(!history8($logs,10,[22=>true,23=>true])['submitted']) exit(1);
+if(history8($logs,10,[23=>true])['submitted']) exit(1);
+$logs[]=event8(30,'STATUS','3','5');
+if(history8($logs,10,[22=>true])['submitted']) exit(1);

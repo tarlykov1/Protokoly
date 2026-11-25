@@ -1,3 +1,4 @@
+const codes={1:'Новая',2:'Ожидает выполнения',3:'Выполняется',4:'Ждёт контроля',5:'Завершена',6:'Отложена',7:'Отклонена'};
 'use strict';
 const $=id=>document.getElementById(id);
 const {groups,csrf}=JSON.parse($('config').textContent);
@@ -100,7 +101,7 @@ function chartBars(id,entries,complete,empty){
   }
 }
 function overviewCharts(rows,complete,now){
-  const codes={1:'Новая',2:'Ожидает выполнения',3:'Выполняется',4:'Ждёт контроля',5:'Завершена',6:'Отложена',7:'Отклонена'};
+
   const statuses=new Map(),stages=new Map();
   for(const r of rows){
     const name=codes[r.status]||Model.missing;statuses.set(name,(statuses.get(name)||0)+1);
@@ -179,7 +180,13 @@ async function openDetail(r){
   const content=$('detail').querySelector('article');content.replaceChildren(elem('h2',r.title),elem('h3','История сроков'));
   content.append(elem('p',r.history?'Переносов · '+r.history.moves:Model.missing));
   for(const h of r.history?.dates||[])content.append(elem('p',dt(h.at)+' · '+(h.from||'Без срока')+' → '+(h.to||'Без срока')));
-  content.append(elem('h3','Изменения'));for(const h of r.history?.changes||[])content.append(elem('p',dt(h.at)+' · '+h.field));
+  const fields={STATUS:'Статус',TITLE:'Название',STAGE:'Стадия',ACCOMPLICES:'Соисполнители',AUDITORS:'Наблюдатели',RESULT:'Результат',RESULT_EDIT:'Изменён результат',TAGS:'Теги',COMMENT_EDIT:'Изменён комментарий',DEADLINE:'Срок'};
+  content.append(elem('h3','Изменения'));
+  for(const h of r.history?.changes||[]){
+    const parts=[dt(h.at),h.author,fields[h.field]||h.field];
+    if(h.field==='STATUS' && h.to) parts.push((codes[h.from]||h.from||'—')+' → '+(codes[h.to]||h.to));
+    content.append(elem('p',parts.filter(Boolean).join(' · ')));
+  }
   content.append(elem('h3','Комментарии'),elem('p','Реакция контролёра · '+fmt(r.reaction)));
   $('detail').showModal();
   const pending=elem('p','Загрузка комментариев…');content.append(pending);
