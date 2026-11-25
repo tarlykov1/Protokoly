@@ -314,20 +314,42 @@ function closedSeries(rows,period){
   return [...counts].sort(([a],[b])=>a.localeCompare(b));
 }
 function options(id,values){$(id).replaceChildren(...[...new Set(values.filter(Boolean))].sort().map(x=>new Option(x,x)));}
-function render(){
+let reconcileWhenReady=false;
+function render(changed=''){
   const f=Object.fromEntries(fields.map(k=>[k,$(k).value]));
-  const scope=groups.filter(g=>(!f.source||g.source===f.source)&&(!f.group||String(g.id)===f.group));
   const histories={},all=[];
-  const complete=scope.length>0&&scope.every(g=>results.get(g.id)?.status==='ready');
   $('sources').textContent=groups.map(g=>{
     const v=results.get(g.id);return g.name+' · '+(v?.status==='ready'?'Выгрузка '+dt(v.at)+' · проверка задач '+dt(v.checked):v?.error||'Ожидается выгрузка');
   }).join('\n');
-  for(const g of scope){
+  for(const g of groups){
     const pack=results.get(g.id);if(pack?.status!=='ready')continue;
     histories[g.id]=pack.history;
     for(const row of pack.rows)all.push(Object.assign(row,{source:g.source,group:g.id,groupName:g.name}));
   }
-  options('people',all.flatMap(r=>[r.responsible,...r.accomplices]));options('events',all.map(r=>r.event));
+  const typed=groups.filter(g=>!f.source||g.source===f.source);
+  const clearField=id=>{f[id]='';$(id).value='';};
+  if(f.group&&!typed.some(g=>String(g.id)===f.group))clearField('group');
+  const scope=typed.filter(g=>!f.group||String(g.id)===f.group);
+  const complete=scope.length>0&&scope.every(g=>results.get(g.id)?.status==='ready');
+  if(changed==='source'||changed==='group')reconcileWhenReady=true;
+  if(complete && reconcileWhenReady){
+    reconcileWhenReady=false;
+    const base={...f,event:'',person:''};
+    for(const id of ['person','event']){
+      if(!f[id])continue;
+      base[id]=f[id];
+      if(!all.some(row=>Model.match(row,base))){base[id]='';clearField(id);}
+    }
+  }
+  const matchingExcept=id=>all.filter(row=>Model.match(row,{...f,[id]:''}));
+  const groupIds=new Set(matchingExcept('group').map(row=>row.group));
+  const facetsActive=fields.some(id=>id!=='source'&&id!=='group'&&f[id]);
+  const choices=typed.filter(g=>groupIds.has(g.id) || String(g.id)===f.group ||
+    (!facetsActive && (!f.source || results.get(g.id)?.status!=='ready')));
+  $('group').replaceChildren(new Option('Все группы',''),...choices.map(g=>new Option(g.name,String(g.id))));
+  $('group').value=f.group;
+  options('people',matchingExcept('person').flatMap(r=>[r.responsible,...(r.accomplices||[])]));
+  options('events',matchingExcept('event').map(r=>r.event));
   const rows=all.filter(r=>Model.match(r,f)),now=Date.now();
   if(activeStage!==undefined&&!rows.some(r=>displayStage(r)===activeStage))activeStage=undefined;
   $('csv').disabled=!complete;
@@ -444,7 +466,7 @@ const registrySize=new ResizeObserver(syncWidth);
 registrySize.observe(rowScroll.querySelector('table'));
 registrySize.observe(rowScroll);
 for(const g of groups)$('group').add(new Option(g.name,g.id));
-for(const id of fields)$(id).oninput=()=>{$('registryMode').value='all';render();};
+for(const id of fields)$(id).oninput=()=>{$('registryMode').value='all';render(id);};
 $('period').oninput=render;
 $('clear').onclick=()=>{for(const id of fields)$(id).value='';zone='';riskFilter=null;activeStage=undefined;render();};
 $('csv').onclick=downloadRegistry;

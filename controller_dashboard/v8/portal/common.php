@@ -73,6 +73,14 @@ function protocolGroups8($groups,$legacy) {
     }
     return $groups;
 }
+function extraProtocols8($path) {
+    if (!file_exists($path)) return [];
+    $raw=file_get_contents($path);
+    $ids=$raw===false ? null : json_decode($raw);
+    if (!is_array($ids)) throw new RuntimeException('Не удалось прочитать список групп протоколов');
+    foreach ($ids as $id) if (!is_int($id) || $id<=0) throw new RuntimeException('Некорректный ID группы протоколов');
+    return $ids;
+}
 function context8() {
     global $USER;
     if (!$USER || !$USER->IsAuthorized()) fail8(401,'Войдите в Битрикс24');
@@ -86,7 +94,9 @@ function context8() {
     foreach ($cfg['technical_ids'] ?? [] as $id) unset($controllers[$id]);
     $legacyPath=$_SERVER['DOCUMENT_ROOT'].'/controller-dashboard/config.php';
     $legacy=is_readable($legacyPath) ? require $legacyPath : [];
-    $groups=access8($USER,protocolGroups8($cfg['groups'],$legacy),$controllers);
+    $configured=protocolGroups8($cfg['groups'],$legacy);
+    $configured=protocolGroups8($configured,['protocol_group_ids'=>extraProtocols8('/etc/controller-v8/protocol-groups.json')]);
+    $groups=access8($USER,$configured,$controllers);
     return [$cfg,(int)$USER->GetID(),$groups,$controllers];
 }
 function access8($USER,$groups,$controllers) {

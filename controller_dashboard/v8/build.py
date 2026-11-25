@@ -16,6 +16,7 @@ def build(destination):
         "rollback.sh",
         "update-portal.sh",
         "portal.example.php",
+        "protocol-groups.php",
         "controller-v8.service",
     ]:
         files[name] = (ROOT / name).read_bytes()

@@ -34,3 +34,5 @@
 ## Сборка и проверки
 
 Из controller_dashboard/v8 в репозитории: `python -m unittest discover -s tests`, `node --test tests/model.cjs`, `php tests/history.php`, `python build.py controller-v8.0.zip`. CI также проверяет синтаксис PHP, JavaScript, shell и контрольные суммы распакованной поставки.
+
+На портале команда `php controller-v8/protocol-groups.php --list` показывает ID настроенных протокольных групп до проверки членства. Команда `php controller-v8/protocol-groups.php --add ID1 ID2` добавляет группы в /etc/controller-v8/protocol-groups.json. Подставьте действительные числовые ID рабочих групп. После обновления страницы Битрикс24 проверяет доступ пользователя к каждой группе и задаче.

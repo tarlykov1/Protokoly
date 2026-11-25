@@ -32,4 +32,5 @@ php -r '
     $groups=protocolGroups8([], $cfg);
     echo $groups ? "Групп протоколов в прежнем кабинете: ".count($groups)."\n" : "В прежнем кабинете список protocol_group_ids пуст. Используется настройка /etc/controller-v8/portal.php.\n";
 ' "$legacy" "$dir/common.php"
+echo "Управление группами: php '$src/protocol-groups.php' --list"
 echo 'Кабинет обновлён.'

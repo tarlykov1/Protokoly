@@ -9,7 +9,7 @@ if (class_exists('CJSCore') && isset($GLOBALS['APPLICATION'])) {
     CJSCore::Init(['sidepanel']);
     $GLOBALS['APPLICATION']->ShowHead();
 }
-?><link rel="stylesheet" href="style.css?rev=task7"></head>
+?><link rel="stylesheet" href="style.css?rev=facets8"></head>
 <body><main>
 <h1 class="sr-only">Кабинет контролёра</h1>
 <section id="filters" class="filters">
@@ -68,4 +68,4 @@ if (class_exists('CJSCore') && isset($GLOBALS['APPLICATION'])) {
 </section>
 <dialog id="detail"><button id="close">Закрыть</button><article></article></dialog></main>
 <script id="config" type="application/json"><?=json_encode(['groups'=>$public,'csrf'=>$csrf,'userId'=>(int)(isset($GLOBALS['USER']) ? $GLOBALS['USER']->GetID() : 0)],JSON_HEX_TAG|JSON_HEX_AMP|JSON_THROW_ON_ERROR)?></script>
-<script src="model.js?rev=task7"></script><script src="registry.js?rev=task7"></script><script src="ui.js?rev=task7"></script></body></html>
+<script src="model.js?rev=facets8"></script><script src="registry.js?rev=facets8"></script><script src="ui.js?rev=facets8"></script></body></html>

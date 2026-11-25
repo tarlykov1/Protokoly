@@ -68,6 +68,7 @@ with tempfile.TemporaryDirectory() as tmp:
                 row = {
                     "id": group,
                     "title": "Поручение " + str(group),
+                    "event": "Совещание " + str(group),
                     "state": "done" if group == 1 else "open",
                     "accomplices": ["Соисполнитель"] if group == 1 else [],
                     "due": None if group == 1 else "2000-01-01T10:00:00Z",
@@ -143,6 +144,17 @@ with tempfile.TemporaryDirectory() as tmp:
         expect(page.locator("#body tr")).to_have_count(1)
         expect(page.locator("#body")).to_contain_text("Поручение 1")
         page.locator("#registryReset").click()
+        page.locator("#source").select_option("memo")
+        assert page.locator("#group option").evaluate_all("x=>x.map(o=>o.value)")==["","1"]
+        assert page.locator("#events option").evaluate_all("x=>x.map(o=>o.value)")==["Совещание 1"]
+        page.locator("#person").fill("Соисполнитель")
+        page.locator("#source").select_option("protocol")
+        expect(page.locator("#person")).to_have_value("")
+        assert page.locator("#people option").evaluate_all("x=>x.map(o=>o.value)")==["Исполнитель 2"]
+        page.locator("#source").select_option("")
+        page.locator("#event").fill("Совещание 1")
+        assert page.locator("#group option").evaluate_all("x=>x.map(o=>o.value)")==["","1"]
+        page.locator("#event").fill("")
         page.locator("#person").fill("Соисполнитель")
         expect(page.locator("#body tr")).to_have_count(1)
         page.evaluate("window.BX={SidePanel:{Instance:{open(url){window.openedTask=url;return true;}}}}")
@@ -167,7 +179,7 @@ with tempfile.TemporaryDirectory() as tmp:
         for width in (390,1366):
             page.set_viewport_size({"width":width,"height":844})
             scroll = page.locator("#lower")
-            assert scroll.evaluate("e=>e.clientHeight<=innerHeight*.56+1 && e.scrollHeight>e.clientHeight")
+            assert scroll.evaluate("e=>Math.abs(e.clientHeight-innerHeight*1.12)<25 && e.scrollHeight>e.clientHeight")
             scroll.evaluate("e=>{e.scrollTop=500;e.scrollLeft=e.scrollWidth;}")
             page.wait_for_function("Math.abs(upper.scrollLeft-lower.scrollLeft)<=1 && lower.scrollTop>0")
             assert scroll.evaluate("e=>Math.abs(e.querySelector('th').getBoundingClientRect().top-e.getBoundingClientRect().top)<2")
