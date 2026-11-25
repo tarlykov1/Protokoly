@@ -125,6 +125,11 @@ const Model = (() => {
     if(/^[\s]*[=+@-]|^[\t\r\n]/.test(text))text="'"+text;
     return '"'+text.replace(/"/g,'""')+'"';
   }
-  return {tally,kpiCoverage,stageDeadlines,csvCell,bucket,missing,day,match,metrics,zones,series,discipline,exactCount,groupRows,upcoming,overdueWeek};
+  function closureLabel(row){
+    const closure=row.controller_closure;
+    if(!closure)return '';
+    return closure.accepted_submission?'Принято контролёром после сдачи':'Закрыто контролёром';
+  }
+  return {closureLabel,tally,kpiCoverage,stageDeadlines,csvCell,bucket,missing,day,match,metrics,zones,series,discipline,exactCount,groupRows,upcoming,overdueWeek};
 })();
 if(typeof module!=='undefined') module.exports=Model;

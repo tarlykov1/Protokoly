@@ -284,7 +284,13 @@ function render(){
 let detailRequest=0;
 async function openDetail(r){
   const request=++detailRequest;
-  const content=$('detail').querySelector('article');content.replaceChildren(elem('h2',r.title),elem('h3','История сроков'));
+  const content=$('detail').querySelector('article');content.replaceChildren(elem('h2',r.title));
+  if(r.controller_closure){
+    const closure=r.controller_closure;
+    content.append(elem('strong',Model.closureLabel(r)),elem('p',[closure.author,dt(closure.at)].join(' · ')),
+      elem('p','Зачтено в ИД главного ответственного · '+fmt(r.responsible)));
+  }
+  content.append(elem('h3','История сроков'));
   content.append(elem('p',r.history?'Переносов · '+r.history.moves:Model.missing));
   for(const h of r.history?.dates||[])content.append(elem('p',dt(h.at)+' · '+(h.from||'Без срока')+' → '+(h.to||'Без срока')));
   const fields={STATUS:'Статус',TITLE:'Название',STAGE:'Стадия',ACCOMPLICES:'Соисполнители',AUDITORS:'Наблюдатели',RESULT:'Результат',RESULT_EDIT:'Изменён результат',TAGS:'Теги',COMMENT_EDIT:'Изменён комментарий',DEADLINE:'Срок'};
@@ -308,10 +314,10 @@ async function openDetail(r){
 }
 function downloadRegistry(){
   const headers=['ID','Поручение','Документ','Мероприятие','Группа','Ответственный','Соисполнители','Помощники',
-    'Руководитель в задаче','Руководитель по оргструктуре','Стадия','Статус Битрикс24','Срок','Состояние','Реакция контролёра','Новый комментарий'];
+    'Руководитель в задаче','Руководитель по оргструктуре','Стадия','Статус Битрикс24','Срок','Состояние','Реакция контролёра','Новый комментарий','Закрытие контролёром','Кто закрыл (контролёр)'];
   const lines=[headers,...Registry.visibleRows().map(r=>[r.id,r.title,r.document,r.event,r.groupName,r.responsible,
     fmt(r.accomplices),fmt(r.assistants),r.leader,r.manager,r.stage,codes[r.status],dt(r.due),
-    {open:'В работе',done:'Исполнено',obsolete:'Неактуально'}[r.state],fmt(r.reaction),fmt(r.unread)])];
+    {open:'В работе',done:'Исполнено',obsolete:'Неактуально'}[r.state],fmt(r.reaction),fmt(r.unread),Model.closureLabel(r),r.controller_closure?.author||''])];
   const blob=new Blob(['\uFEFF',lines.map(line=>line.map(Model.csvCell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob),link=elem('a');
   link.href=url;link.download='Реестр поручений '+Model.day(Date.now())+'.csv';

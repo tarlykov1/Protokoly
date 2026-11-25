@@ -30,6 +30,8 @@ const Registry = (() => {
       }
       signals.push({ label, text, tone });
     }
+    const label=Model.closureLabel(row);
+    if(label)signals.push({label,text:label,tone:'info'});
     return { signals, unknown };
   }
 

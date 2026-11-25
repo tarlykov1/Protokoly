@@ -12,18 +12,21 @@ function related8($class,$key,$ids,$select,$filter=[], $order=[]) {
     }
     return $out;
 }
-function history8($logs,$responsible,$delegates=[],$names=[]) {
-    $creation=false; $started=null; $submitted=false; $dates=[]; $changes=[]; $moves=0;
+function history8($logs,$responsible,$delegates=[],$names=[],$controllers=[]) {
+    $controllerClosure=null; $creation=false; $started=null; $submitted=false; $dates=[]; $changes=[]; $moves=0;
     foreach($logs as $l) {
         $field=$l['FIELD']; $old=(string)$l['FROM_VALUE']; $new=(string)$l['TO_VALUE'];
         $at=iso8($l['CREATED_DATE']);
         if(in_array($field,['NEW','CREATED_DATE'],true)) $creation=true;
         if($field==='STATUS') {
+            $controllerClosure=null;
             if(in_array($new,['1','2','3','6','7'],true)) $submitted=false;
             $actor=(int)$l['USER_ID'];
             if($actor>0 && ($actor===$responsible || isset($delegates[$actor]))) {
                 if($actor===$responsible && $new==='3' && !$started) $started=$at;
                 if(in_array($new,['4','5'],true)) $submitted=true;
+            } elseif($new==='5' && $old!=='5' && $responsible>0 && $actor>0 && isset($controllers[$actor])) {
+                $controllerClosure=['author'=>$names[$actor] ?? 'ID '.$actor,'at'=>$at,'accepted_submission'=>$submitted];
             }
         }
         if($field==='DEADLINE') {
@@ -37,7 +40,7 @@ function history8($logs,$responsible,$delegates=[],$names=[]) {
             $changes[]=$change;
         }
     }
-    return compact('creation','started','submitted','dates','moves','changes');
+    return compact('controllerClosure','creation','started','submitted','dates','moves','changes');
 }
 function chatMessages8($chat,$detail) {
     if(!\Bitrix\Im\Dialog::hasAccess('chat'.$chat)) return null;
@@ -167,14 +170,14 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
             if($m['TYPE']==='U') $aud[]=(int)$m['USER_ID'];
         }
         $managers=[]; foreach($departments[$resp] ?? [] as $d) if(isset($heads[$d]) && $heads[$d]!==$resp) $managers[]=$heads[$d];
-        $h=array_key_exists($id,$logs) && $logs[$id]===null ? null : history8($logs[$id] ?? [],$resp,$assistants[$resp] ?? [],$names);
+        $h=array_key_exists($id,$logs) && $logs[$id]===null ? null : history8($logs[$id] ?? [],$resp,$assistants[$resp] ?? [],$names,$controllers);
         $stage=$stages[(int)$r['STAGE_ID']][0]['TITLE'] ?? $meta['stage'];
         $status=(string)($r['REAL_STATUS'] ?? $r['STATUS']);
         $state=null;
         if(preg_match('/неактуаль|отмен/iu',(string)$stage.' '.(string)$meta['source_status']) ||
            in_array((int)$r['STAGE_ID'],$spec['obsolete_stages'] ?? [],true)) $state='obsolete';
         elseif($stage || isset($spec['obsolete_stages'])){
-            if($status==='5') $state=($h['submitted'] ?? false) ? 'done' : null;
+            if($status==='5') $state=(!empty($h['submitted']) || !empty($h['controllerClosure'])) ? 'done' : null;
             elseif(in_array($status,['1','2','3','4','6'],true)) $state='open';
         }
         $last=null; $reaction=null; $commentAt=null;
@@ -190,6 +193,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
         $assigned=iso8($r['CREATED_DATE']); $changed=iso8($r['CHANGED_DATE']);
         $activity=isset($messages[$id]) && $h!==null ? max(array_filter([$assigned,$changed,$commentAt]) ?: [null]) : null;
         $rows[]=['id'=>$id,'title'=>$r['TITLE'],'document'=>$meta['document'],'event'=>$meta['event'],
+          'controller_closure'=>$state==='done' ? ($h['controllerClosure'] ?? null) : null,
           'state'=>$state,'stage'=>$stage,'status'=>$status,'due'=>iso8($r['DEADLINE']),'closed'=>iso8($r['CLOSED_DATE']),
           'assigned'=>$assigned,'responsible'=>$names[$resp] ?? ($resp ? 'ID '.$resp : null),'responsible_id'=>$resp,
           'observed_by_controller'=>$controllers===null ? null : (bool)array_intersect($aud,array_keys($controllers)),

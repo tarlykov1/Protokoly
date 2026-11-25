@@ -15,3 +15,12 @@ if(!history8($logs,10,[22=>true,23=>true])['submitted']) exit(1);
 if(history8($logs,10,[23=>true])['submitted']) exit(1);
 $logs[]=event8(30,'STATUS','3','5');
 if(history8($logs,10,[22=>true])['submitted']) exit(1);
+
+$submit=event8(31,'STATUS','4','3'); $close=event8(31,'STATUS','5','4');
+$roster=[31=>true]; $names=[31=>'Контролёр'];
+$h=history8([$submit,$close],10,[],$names,$roster);
+if($h['submitted'] || $h['controllerClosure']['author']!=='Контролёр' || $h['controllerClosure']['accepted_submission']) exit(1);
+if(history8([$submit],10,[],$names,$roster)['controllerClosure']!==null) exit(1);
+if(history8([$close],10,[],$names,[])['controllerClosure']!==null) exit(1);
+if(history8([$close,event8(31,'STATUS','3','5')],10,[],$names,$roster)['controllerClosure']!==null) exit(1);
+if(!history8([event8(22,'STATUS','4','3'),$close],10,[22=>true],$names,$roster)['controllerClosure']['accepted_submission']) exit(1);
