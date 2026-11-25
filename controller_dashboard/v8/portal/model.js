@@ -15,6 +15,26 @@ const Model = (() => {
     if(states.some(s=>!['open','done','obsolete'].includes(s))) return null;
     return ratio(states.filter(s=>s==='done').length,states.filter(s=>s!=='obsolete').length);
   }
+  function tally(rows,test){
+    let yes=0, unknown=0;
+    for(const row of rows){
+      const result=test(row);
+      if(result==null) unknown++;
+      else if(result) yes++;
+    }
+    return {yes,unknown,total:rows.length};
+  }
+  function kpiCoverage(rows){
+    const execution=tally(rows,r=>r.state==null?null:r.state==='done');
+    const known=rows.filter(r=>r.state==='open'||r.state==='done');
+    const closed=rows.filter(r=>r.state==='done');
+    const timely=tally(closed,r=>{
+      const due=Date.parse(r.due),at=Date.parse(r.closed);
+      return Number.isFinite(due)&&Number.isFinite(at)?at<=due:null;
+    });
+    return {execution,timely,active:known.length,discipline:ratio(execution.yes,known.length),
+      onTime:ratio(timely.yes,timely.total-timely.unknown)};
+  }
   function metrics(rows,complete){
     if(!complete)return [null,null,null];
     const done=rows.filter(r=>r.state==='done');
@@ -105,6 +125,6 @@ const Model = (() => {
     if(/^[\s]*[=+@-]|^[\t\r\n]/.test(text))text="'"+text;
     return '"'+text.replace(/"/g,'""')+'"';
   }
-  return {stageDeadlines,csvCell,bucket,missing,day,match,metrics,zones,series,discipline,exactCount,groupRows,upcoming,overdueWeek};
+  return {tally,kpiCoverage,stageDeadlines,csvCell,bucket,missing,day,match,metrics,zones,series,discipline,exactCount,groupRows,upcoming,overdueWeek};
 })();
 if(typeof module!=='undefined') module.exports=Model;

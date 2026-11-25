@@ -36,3 +36,12 @@ test('детализация закрытых по срокам не припи�
  assert.deepEqual(m.stageDeadlines([task],Date.now()).map(r=>r[1]),[1,0]);
  assert.deepEqual(m.stageDeadlines([task,{...task,closed:null}],Date.now()).map(r=>r[1]),[null,null]);
 });
+
+test('частичный охват не скрывает доказанные результаты и не меняет знаменатель молча',()=>{
+ const sample=[{state:'done',due:'2026-01-10',closed:'2026-01-12'},{state:'open'},{state:null},{state:'obsolete'}];
+ const c=m.kpiCoverage(sample);
+ assert.deepEqual(c.execution,{yes:1,unknown:1,total:4});
+ assert.equal(c.active,2);assert.equal(c.discipline,50);assert.equal(c.onTime,0);
+ assert.equal(m.kpiCoverage([{state:null}]).discipline,null);
+ assert.equal(m.kpiCoverage([{state:'done',due:null,closed:null}]).onTime,null);
+});

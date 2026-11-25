@@ -100,16 +100,32 @@ function chartBars(id,entries,complete,empty,percent=false){
     row.append(line,track);box.append(row);
   }
 }
+function confirmedCount({yes,unknown}){
+  if(!unknown)return fmt(yes);
+  return yes?'≥ '+yes:Model.missing;
+}
+function coverageNote(n){
+  return n?' · без подтверждения: '+n:'';
+}
 function renderCards(rows,complete,now){
-  const [discipline,onTime,obsolete]=Model.metrics(rows,complete);
-  const count=fn=>complete?Model.exactCount(rows,fn):null;
+  const {execution,timely,active,discipline,onTime}=Model.kpiCoverage(rows);
+  const makeCount=(label,test,detail,tone)=>{
+    const tally=Model.tally(rows,test);
+    return [label,complete?confirmedCount(tally):Model.missing,complete?detail+coverageNote(tally.unknown):detail,tone];
+  };
+  const considered=timely.total-timely.unknown;
   const cards=[
-    ['ИД · исполнено / актуальные',pct(discipline),'Неактуальные исключены из расчёта','discipline'],
-    ['Закрыты в срок / все исполненные',pct(onTime),'По крайнему сроку и дате закрытия','timeliness'],
-    ['Исполнено',fmt(count(r=>r.state==null?null:r.state==='done')),'По главному ответственному','done'],
-    ['Просрочено',fmt(count(r=>Model.zones['Просрочено'](r,now))),'Незавершённые поручения','overdue'],
-    ['Срок в ближайшие 5 дней',fmt(count(r=>Model.upcoming(r,now,5))),'Включая сегодняшний день','upcoming'],
+    ['ИД · исполнено / актуальные',complete?pct(discipline):Model.missing,
+      complete?'Подтверждено: '+execution.yes+' из '+active+' актуальных'+coverageNote(execution.unknown):'Ожидаются данные групп','discipline'],
+    ['Закрыты в срок / все исполненные',complete?pct(onTime):Model.missing,
+      complete?'Среди проверенных: '+timely.yes+' из '+considered+coverageNote(execution.unknown+timely.unknown):'Ожидаются данные групп','timeliness'],
+    makeCount('Исполнено',r=>r.state==null?null:r.state==='done','По главному ответственному','done'),
+    makeCount('Просрочено',r=>Model.zones['Просрочено'](r,now),'Незавершённые поручения','overdue'),
+    makeCount('Срок в ближайшие 5 дней',r=>Model.upcoming(r,now,5),'Включая сегодняшний день','upcoming'),
   ];
+  if(complete && execution.unknown) cards[0][0]='ИД по подтверждённым поручениям';
+  if(complete && (execution.unknown||timely.unknown)) cards[1][0]='Закрыты в срок · по подтверждённым';
+  const obsolete=confirmedCount(Model.tally(rows,r=>r.state==null?null:r.state==='obsolete'));
   const box=$('kpis');
   box.replaceChildren(...cards.map(([label,value,detail,tone])=>{
     const item=elem('div');item.className='kpi-item kpi-'+tone;
@@ -125,7 +141,10 @@ function portfolio(rows,scope,complete,obsolete){
   chartBars('portfolio',sources.map(key=>[names[key]||key,bySource.get(key)?.length||0]),complete,'Нет доступных групп');
   if(complete)$('portfolio').append(elem('p','Неактуальных поручений: '+fmt(obsolete)));
   const groupsById=Model.groupRows(rows,r=>r.group);
-  const entries=scope.map(group=>[group.name,Model.discipline((groupsById.get(group.id)||[]).map(r=>r.state))]);
+  const entries=scope.map(group=>{
+    const k=Model.kpiCoverage(groupsById.get(group.id)||[]);
+    return [group.name+(k.execution.unknown?' · по подтверждённым ('+k.active+' актуальных, без подтверждения: '+k.execution.unknown+')':''),k.discipline];
+  });
   chartBars('groupDiscipline',entries,complete,'Нет доступных групп',true);
 }
 const stageColors=['#1398a5','#3976dc','#8764ce','#bd4b89','#24946d','#647388','#be7935'];
@@ -200,7 +219,7 @@ function overviewCharts(rows,complete,now){
 function closedSeries(rows,period){
   const counts=new Map();
   for(const r of rows){
-    if(r.state==null || (r.state==='done'&&!r.closed))return [];
+    if(!Number.isFinite(Date.parse(r.closed)))continue;
     if(r.state!=='done')continue;
     const key=Model.bucket(Model.day(r.closed),period);
     counts.set(key,(counts.get(key)||0)+1);
@@ -229,8 +248,9 @@ function render(){
   portfolio(rows,scope,complete,obsolete);
   renderStages(rows,complete,now);
   const attentionLabel='Просрочка более 7 дней';
-  const attention=complete?Model.exactCount(rows,r=>Model.overdueWeek(r,now)):null;
-  $('attentionCount').textContent=fmt(attention);
+  const attention=Model.tally(rows,r=>Model.overdueWeek(r,now));
+  $('attentionCount').textContent=complete?confirmedCount(attention):Model.missing;
+  $('attentionCount').title=complete&&attention.unknown?'Без подтверждения: '+attention.unknown:'';
   $('attentionOpen').setAttribute('aria-pressed',zone===attentionLabel?'true':'false');
   $('attentionOpen').onclick=()=>{
     activeStage=undefined;
@@ -242,6 +262,10 @@ function render(){
   }
   overviewCharts(rows,complete,now);
   plot(complete?closedSeries(rows,$('period').value):[], 'closedChart', false);
+  if(complete){
+    const missing=rows.filter(r=>r.state==null||(r.state==='done'&&!Number.isFinite(Date.parse(r.closed)))).length;
+    if(missing)$('closedChart').append(elem('small','Учтены подтверждённые исполнения с датой закрытия · без подтверждения: '+missing));
+  }
   $('zones').replaceChildren(...Object.entries(Model.zones).map(([label,fn])=>{
     const values=rows.map(r=>fn(r,now)),n=values.filter(x=>x===true).length,u=values.filter(x=>x==null).length;
     const b=elem('button',label+' · '+(u===values.length&&u?'Нет данных':complete||n?n:'—')+(u?' (+'+u+' без данных)':''));

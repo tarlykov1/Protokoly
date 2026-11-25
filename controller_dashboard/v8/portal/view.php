@@ -3,7 +3,7 @@ if (!isset($public,$csrf)) { http_response_code(403); exit; }
 ?>
 <!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Кабинет контролёра</title><link rel="stylesheet" href="style.css?rev=portfolio1"></head>
+<title>Кабинет контролёра</title><link rel="stylesheet" href="style.css?rev=coverage2"></head>
 <body><main>
 <h1 class="sr-only">Кабинет контролёра</h1>
 <section id="filters" class="filters">
@@ -53,4 +53,4 @@ if (!isset($public,$csrf)) { http_response_code(403); exit; }
 </section>
 <dialog id="detail"><button id="close">Закрыть</button><article></article></dialog></main>
 <script id="config" type="application/json"><?=json_encode(['groups'=>$public,'csrf'=>$csrf],JSON_HEX_TAG|JSON_HEX_AMP|JSON_THROW_ON_ERROR)?></script>
-<script src="model.js?rev=portfolio1"></script><script src="registry.js?rev=portfolio1"></script><script src="ui.js?rev=portfolio1"></script></body></html>
+<script src="model.js?rev=coverage2"></script><script src="registry.js?rev=coverage2"></script><script src="ui.js?rev=coverage2"></script></body></html>
