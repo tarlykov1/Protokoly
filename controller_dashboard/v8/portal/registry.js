@@ -69,7 +69,7 @@ const Registry = (() => {
       items.sort((a, b) => dateOrder(a.row.assigned, b.row.assigned, true));
     }
     visible = items.map(item => item.row);
-    control('regTitle').textContent = 'Реестр поручений · ' + visible.length + (complete ? '' : ' по загруженным группам');
+    control('regTitle').textContent = 'Реестр поручений (' + visible.length + ' из ' + source.length + ')' + (complete ? '' : ' по загруженным группам');
     control('registryCount').textContent = 'Показано ' + visible.length + ' из ' + source.length +
       (complete ? '' : ' по загруженным группам');
     const body = control('body');
@@ -82,7 +82,13 @@ const Registry = (() => {
       title.textContent = '#' + row.id + ' ' + (row.title || '');
       title.addEventListener('click', () => openTask(row));
       const cell=value=>{const td=tr.insertCell();td.textContent=fmt(value);return td;};
-      cell(dt(row.assigned));cell(dt(row.due));
+      const shortDate=value=>value?dt(value).split(',')[0]:Model.missing;
+      cell(shortDate(row.assigned));
+      const deadline=cell(shortDate(row.due));
+      if(overdue){
+        const days=(Date.parse(Model.day(now))-Date.parse(Model.day(row.due)))/86400000;
+        deadline.append(elem('small',days?days+' дн. просрочки':'Просрочено сегодня'));
+      }
       const badges = tr.insertCell();
       badges.className = 'registry-signals';
       for (const { text, tone } of signals) {
@@ -94,12 +100,23 @@ const Registry = (() => {
       if (!signals.length) badges.textContent = unknown ? 'Нет данных' : '—';
       const state = { open: 'В работе', done: 'Исполнено', obsolete: 'Неактуально' }[row.state];
       const responsible=cell(row.responsible);
-      if(row.accomplices?.length)responsible.append(elem('small','Соисполнители: '+row.accomplices.join(', ')));
+      if(row.accomplices?.length){
+        const names=row.accomplices;
+        responsible.append(elem('small','Соисполнители: '+names.slice(0,2).join(', ')));
+        if(names.length>2){
+          const more=elem('details'),summary=elem('summary','Ещё '+(names.length-2));
+          more.append(summary,elem('small',names.slice(2).join(', ')));responsible.append(more);
+        }
+      }
       cell(row.assistants);
       const task=tr.insertCell();
       task.className='registry-document';
       task.append(elem('b',fmt(row.document)),title);
-      cell(row.reaction==null?'Нет данных':row.reaction?'Есть комментарий':'Комментария нет');
+      task.append(elem('small',[row.event,row.groupName,row.stage].filter(Boolean).join(' · ')));
+      const actions=cell(row.controller_comments_month==null
+        ? (row.reaction==null?'Нет данных':row.reaction?'Есть комментарий':'Комментария нет')
+        : 'Реакция в этом месяце: '+row.controller_comments_month+' комм.');
+      if(row.last_controller_comment_at)actions.append(elem('small','Последний: '+shortDate(row.last_controller_comment_at)));
       for(const value of [row.event,row.groupName,row.leader,row.manager,row.stage,state,row.unread])cell(value);
       fragment.append(tr);
     }

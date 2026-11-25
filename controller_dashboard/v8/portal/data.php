@@ -181,12 +181,19 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
             elseif(in_array($status,['1','2','3','4','6'],true)) $state='open';
         }
         $last=null; $reaction=null; $commentAt=null;
+        $reactionMonth=null; $lastReactionAt=null;
+        $monthStart=strtotime(date('Y-m-01 00:00:00'));
         if(isset($messages[$id])){
             $last=0; $reaction=$controllers===null ? null : false;
+            $reactionMonth=$controllers===null ? null : 0;
             foreach($messages[$id] as $m){
                 if(!humanComment8($m)) continue;
                 $aid=(int)$m['AUTHOR_ID']; $last=(int)$m['ID']; $commentAt=iso8($m['POST_DATE']);
-                if(isset($controllers[$aid])) $reaction=true;
+                if(isset($controllers[$aid])){
+                    $reaction=true;
+                    if($commentAt && strtotime($commentAt)>strtotime($lastReactionAt ?? '1970-01-01')) $lastReactionAt=$commentAt;
+                    if($commentAt && strtotime($commentAt)>=$monthStart) $reactionMonth++;
+                }
 
             }
         }
@@ -200,6 +207,7 @@ function assemble8($cfg,$uid,$group,$spec,$seed,$tasks,$controllers) {
           'accomplices'=>names8($acc,$names),'assistants'=>$assistants===null ? null : names8(array_intersect(array_unique(array_merge($acc,$aud)),array_keys($assistants[$resp] ?? [])),$names),
           'leader'=>$meta['leader'] ? ($names[$meta['leader']] ?? 'ID '.$meta['leader']) : null,
           'manager'=>$managers ? names8(array_unique($managers),$names) : null,'history'=>$h,'reaction'=>$reaction,'last_comment'=>$last,
+          'controller_comments_month'=>$reactionMonth,'last_controller_comment_at'=>$lastReactionAt,
           'comments_source'=>$channels[$id] ?? null,'comments_status'=>$reasons[$id] ?? (isset($channels[$id]) ? 'ready' : 'unavailable')];
         $observations[]= ['id'=>$id,'state'=>$state,'assigned'=>$assigned,'started'=>$h['started'] ?? null,
            'history_known'=>$h!==null && ($h['started'] || ($h['creation'] && $state==='open')),'activity'=>$activity,'last_comment'=>($channels[$id] ?? null)===$observeChannel ? $last : null];

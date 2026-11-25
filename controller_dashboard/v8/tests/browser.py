@@ -88,6 +88,13 @@ with tempfile.TemporaryDirectory() as tmp:
 
         page.route("**/api.php", api)
         page.goto(f"http://127.0.0.1:{server.server_port}")
+        expect(page.locator("#registryMode")).to_have_value("problems")
+        expect(page.locator("#registryOrder")).to_have_value("risk")
+        expect(page.locator("#body tr")).to_have_count(1)
+        expect(page.locator("#stageCards .stage-heading")).to_have_text(
+            ["К выполнению","Выполняется","На доработке","На приёмке","Завершена","Неактуально"]
+        )
+        page.locator("#registryMode").select_option("all")
         expect(page.locator("#body tr")).to_have_count(2)
         expect(page.locator("#kpis strong").first).to_have_text("50 %")
         expect(page.locator("#statusGraph")).to_contain_text("Завершена")

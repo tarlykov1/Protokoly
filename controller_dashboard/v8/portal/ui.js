@@ -147,60 +147,84 @@ function portfolio(rows,scope,complete,obsolete){
   });
   chartBars('groupDiscipline',entries,complete,'Нет доступных групп',true);
 }
-const stageColors=['#1398a5','#3976dc','#8764ce','#bd4b89','#24946d','#647388','#be7935'];
-function stageColor(name,index){
-  if(name==null)return '#8692a4';
-  const text=name.toLocaleLowerCase('ru');
-  const tags=['к выполнению','выполня','доработ','приём','выполнен','неактуал'];
-  if(text.includes('заверш'))return stageColors[4];
-  if(text.includes('прием'))return stageColors[3];
-  const found=tags.findIndex(tag=>text.includes(tag));
-  return stageColors[found<0?index%stageColors.length:found];
+const stageStyles = new Map([
+  ['К выполнению', ['#1997a6', '●']],
+  ['Выполняется', ['#377ed7', '▶']],
+  ['На доработке', ['#865dce', '↻']],
+  ['На приёмке', ['#bb5288', '◆']],
+  ['Завершена', ['#20976d', '✓']],
+  ['Неактуально', ['#657487', '−']]
+]);
+const stageAliases = new Map([
+  ['в работе','Выполняется'], ['выполнены','Завершена'], ['выполненные задачи','Завершена'],
+  ['неактуальные задачи','Неактуально'], ['на приемке','На приёмке'],
+  ...Array.from(stageStyles.keys(), name => [name.toLowerCase(), name])
+]);
+function displayStage(row){
+  const name=row.stage?.trim();
+  return stageAliases.get(name?.toLowerCase()) || name || 'Стадия не указана';
+}
+function deadlineSplit(rows,closed,now){
+  let late=0, timely=0;
+  for(const row of rows){
+    const due=Date.parse(row.due);
+    const at=closed?Date.parse(row.closed):now;
+    if(row.state!==(closed?'done':'open') || !Number.isFinite(due) || !Number.isFinite(at))continue;
+    if(at>due)late++;else timely++;
+  }
+  return {lines:[[closed?'Закрыто с просрочкой':'Срок истёк',late],[closed?'Закрыто в срок':'Срок не истёк',timely]],other:rows.length-late-timely};
 }
 function selectStage(key){
+  $('registryMode').value='all';
   riskFilter=null;zone='';activeStage=activeStage===key?undefined:key;
   render();$('regTitle').scrollIntoView({block:'nearest'});
 }
 function renderStages(rows,complete,now){
   const box=$('stageRing'),cards=$('stageCards');
   box.replaceChildren();cards.replaceChildren();
+  $('stageVolume').textContent=complete?'Задач: '+rows.length:'';
   if(!complete||!rows.length){
     box.append(elem('p',complete?'Нет поручений по фильтрам':'Ожидаются данные выбранных групп'));return;
   }
-  const grouped=Model.groupRows(rows,r=>r.stage||null);
+  const grouped=Model.groupRows(rows,displayStage);
   const donut=elem('div'),total=elem('strong',rows.length),legend=elem('div'),stops=[];
   donut.className='stage-donut';total.className='stage-total';legend.className='stage-legend';
   donut.setAttribute('aria-hidden','true');donut.append(total);
   let cumulative=0;
-  for(const [index,[key,batch]] of [...grouped].sort(([a],[b])=>(a||'').localeCompare(b||'','ru')).entries()){
-    const label=key||'Стадия не указана',color=stageColor(key,index);
+  const extras=[...grouped.keys()].filter(key=>!stageStyles.has(key)).sort();
+  for(const key of [...stageStyles.keys(),...extras]){
+    const batch=grouped.get(key)||[], label=key;
+    const [color,icon]=stageStyles.get(key)||['#798591','•'];
     const size=batch.length,share=100*size/rows.length;
-    stops.push(color+' '+cumulative+'% '+(cumulative+share)+'%');cumulative+=share;
+    if(size)stops.push(color+' '+cumulative+'% '+(cumulative+share)+'%');cumulative+=share;
     const line=elem('div'),dot=elem('i'),button=elem('button');
     dot.className='stage-dot';dot.style.background=color;
     line.append(dot,elem('span',label),elem('b',size+' / '+pct(Math.round(share*10)/10)));legend.append(line);
     button.type='button';button.className='stage-card';button.style.setProperty('--stage-color',color);
     button.setAttribute('aria-pressed',activeStage===key?'true':'false');
     button.setAttribute('aria-label',label+' · '+size+' · показать в реестре');
-    button.onclick=()=>selectStage(key);
-    const heading=elem('span',label);heading.className='stage-heading';
+    button.disabled=!size;button.onclick=()=>selectStage(key);
+    const heading=elem('span',label);heading.className='stage-heading';heading.dataset.icon=icon;
     const values=elem('div');values.className='stage-count';
     values.append(elem('strong',size),elem('small',pct(Math.round(share*10)/10)));
     button.append(heading,values);
-    const deadlines=Model.stageDeadlines(batch,now);
-    for(const [caption,count] of deadlines){
+    const deadlines=deadlineSplit(batch,key==='Завершена',now);
+    for(const [caption,count] of deadlines.lines){
       const item=elem('span');item.className='stage-line';
       const track=elem('i'),fill=elem('i');
-      if(count!=null){fill.style.width=100*count/size+'%';track.append(fill);}
-      item.append(elem('span',caption),track,elem('b',fmt(count)),elem('small',count==null?'—':pct(Math.round(count*1000/size)/10)));button.append(item);
+      if(count!=null){fill.style.width=(size?100*count/size:0)+'%';track.append(fill);}
+      item.append(elem('span',caption),track,elem('b',fmt(count)),elem('small',size?pct(Math.round(count*1000/size)/10):'—'));button.append(item);
     }
+    if(deadlines.other){const note=elem('small','Другой/неизвестный срок: '+deadlines.other);note.className='stage-other';button.append(note);}
     cards.append(button);
   }
   donut.style.background='conic-gradient('+stops.join(',')+')';
   const reset=elem('button',activeStage===undefined?'Все стадии выбраны':'Сбросить выбор стадии');
   reset.disabled=activeStage===undefined;
   reset.onclick=()=>selectStage(activeStage);
-  box.append(donut,legend,reset);
+  const head=elem('div');head.className='stage-intro';
+  head.append(elem('b','Стадии и состояние задач'),elem('small','С учётом риска и просрочки'));
+  box.append(head,donut,legend,reset);
 }
 
 let riskFilter=null;
@@ -219,7 +243,7 @@ function riskGroups(rows,now,complete){
     const b=elem('button');b.append(elem('span',label),elem('b',complete?confirmedCount(Model.tally(rows,test)):Model.missing));
     b.setAttribute('aria-pressed',riskFilter===label);
     if(riskFilter===label)selected=test;
-    b.onclick=()=>{riskFilter=riskFilter===label?null:label;zone='';activeStage=undefined;render();$('registry').scrollIntoView();};
+    b.onclick=()=>{$('registryMode').value='all';riskFilter=riskFilter===label?null:label;zone='';activeStage=undefined;render();$('registry').scrollIntoView();};
     box.append(b);
   }
   if(!selected)riskFilter=null;
@@ -270,7 +294,7 @@ function render(){
   }
   options('people',all.flatMap(r=>[r.responsible,...r.accomplices]));options('events',all.map(r=>r.event));
   const rows=all.filter(r=>Model.match(r,f)),now=Date.now();
-  if(activeStage!==undefined&&!rows.some(r=>(r.stage||null)===activeStage))activeStage=undefined;
+  if(activeStage!==undefined&&!rows.some(r=>displayStage(r)===activeStage))activeStage=undefined;
   $('csv').disabled=!complete;
   const obsolete=renderCards(rows,complete,now);
   $('volume').textContent=(complete?'':'Загружено · ')+'Поручений: '+rows.length+scope.filter(g=>results.get(g.id)?.at).map(g=>' · '+g.name+' '+dt(results.get(g.id).at).split(',')[0]).join('');
@@ -282,6 +306,7 @@ function render(){
   $('attentionCount').title=complete&&attention.unknown?'Без подтверждения: '+attention.unknown:'';
   $('attentionOpen').setAttribute('aria-pressed',zone===attentionLabel?'true':'false');
   $('attentionOpen').onclick=()=>{
+    $('registryMode').value='all';
     activeStage=undefined;
     riskFilter=null;zone=zone===attentionLabel?'':attentionLabel;
     render();$('regTitle').scrollIntoView({block:'nearest'});
@@ -298,10 +323,10 @@ function render(){
   $('zones').replaceChildren(...Object.entries(Model.zones).map(([label,fn])=>{
     const values=rows.map(r=>fn(r,now)),n=values.filter(x=>x===true).length,u=values.filter(x=>x==null).length;
     const b=elem('button',label+' · '+(u===values.length&&u?'Нет данных':complete||n?n:'—')+(u?' (+'+u+' без данных)':''));
-    b.setAttribute('aria-pressed',zone===label);b.onclick=()=>{riskFilter=null;zone=zone===label?'':label;render();};return b;
+    b.setAttribute('aria-pressed',zone===label);b.onclick=()=>{$('registryMode').value='all';riskFilter=null;zone=zone===label?'':label;render();};return b;
   }));
   const risk=riskGroups(rows,now,complete);
-  const shown=rows.filter(r=>(!risk||risk(r)===true)&&(!zone||Model.zones[zone](r,now)===true)&&(activeStage===undefined||(r.stage||null)===activeStage));
+  const shown=rows.filter(r=>(!risk||risk(r)===true)&&(!zone||Model.zones[zone](r,now)===true)&&(activeStage===undefined||displayStage(r)===activeStage));
   Registry.update(shown,now,complete,openDetail,syncWidth);
   const series=items=>complete?Model.series(items,histories,scope.map(g=>g.id),$('period').value):[];
   const points=series(rows);plot(points);
@@ -358,7 +383,8 @@ $('upper').onscroll=()=>{$('lower').scrollLeft=$('upper').scrollLeft;};
 $('lower').onscroll=()=>{$('upper').scrollLeft=$('lower').scrollLeft;};
 new ResizeObserver(syncWidth).observe($('lower').querySelector('table'));
 for(const g of groups)$('group').add(new Option(g.name,g.id));
-for(const id of [...fields,'period'])$(id).oninput=render;
+for(const id of fields)$(id).oninput=()=>{$('registryMode').value='all';render();};
+$('period').oninput=render;
 $('clear').onclick=()=>{for(const id of fields)$(id).value='';zone='';riskFilter=null;activeStage=undefined;render();};
 $('csv').onclick=downloadRegistry;
 $('periodButtons').onclick=e=>{
