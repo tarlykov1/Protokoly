@@ -1,0 +1,75 @@
+"""Run a one-page server-side diagnostic without HTTP endpoints or data storage.
+
+Invocation in /webapp/app:
+  CONTROLLER_PILOT_ALLOWED_GROUPS='123' python3 -B /tmp/controller_timeline_v6_8_probe/probe_cli_v68.py --group-id 123
+
+Do not put REST credentials or task data in command arguments.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import inspect
+import json
+import os
+import sys
+
+from live_probe_v68 import ProbeError, probe_group
+
+
+def allowed_from_env() -> frozenset[int]:
+    raw = os.environ.get('CONTROLLER_PILOT_ALLOWED_GROUPS', '').strip()
+    if not raw:
+        raise ProbeError('CONTROLLER_PILOT_ALLOWED_GROUPS не задана')
+    try:
+        ids = frozenset(int(part.strip()) for part in raw.split(','))
+    except ValueError as exc:
+        raise ProbeError('Неверный формат списка разрешённых групп') from exc
+    if not ids or any(i <= 0 for i in ids):
+        raise ProbeError('Список разрешённых групп должен содержать положительные ID')
+    return ids
+
+
+async def call_client(client: object, method: str, params: dict):
+    """Use one raw REST call; preserve the v2 response envelope and pagination."""
+    call = getattr(client, 'call', None)
+    if not callable(call):
+        raise ProbeError('У клиента Битрикс24 отсутствует метод .call')
+    response = call(method, params, raw=True)
+    return await response if inspect.isawaitable(response) else response
+
+
+async def run(group_id: int) -> dict:
+    # Do not disclose exception messages: they may contain URLs or credentials.
+    try:
+        from tools.tools import fast_bitrix
+    except Exception as exc:
+        raise ProbeError(
+            f'Не удалось загрузить клиент Битрикс24 ({type(exc).__name__})'
+        ) from None
+
+    # The production integration is an object with .call(), not a function.
+    async def call(method: str, params: dict):
+        return await call_client(fast_bitrix, method, params)
+
+    return await probe_group(call, group_id=group_id, allowed_groups=allowed_from_env())
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description='Только чтение: первая страница задач одной разрешённой группы')
+    parser.add_argument('--group-id', type=int, required=True)
+    args = parser.parse_args(argv)
+    try:
+        print(json.dumps(asyncio.run(run(args.group_id)), ensure_ascii=False, indent=2))
+        return 0
+    except ProbeError as exc:
+        print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
+        return 2
+    except Exception as exc:
+        # Do not print raw API exceptions: they can contain addresses/headers.
+        print(json.dumps({'ok': False, 'error': 'Неожиданная ошибка диагностического скрипта', 'kind': type(exc).__name__}, ensure_ascii=False), file=sys.stderr)
+        return 3
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

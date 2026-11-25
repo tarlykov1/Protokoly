@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Группа 734 · Кабинет контролёра (пилот)</title>
+<link rel="stylesheet" href="/controller-pilot-test/overview/group734/styles.css">
+<script defer src="/controller-pilot-test/overview/group734/app.js"></script>
+</head>
+<body>
+<header class="site-header"><div class="wrap bar"><div class="brand"><span class="symbol">К</span><div><small>БИТРИКС24 · ТЕСТОВЫЙ КОНТУР</small><b>Кабинет контролёра</b></div></div><nav><a href="/controller-pilot-test/overview/">История пилота</a><a href="/controller-pilot-test/timeline/">Хронология</a></nav></div></header>
+<main class="wrap">
+<section class="intro"><div><div class="eyebrow">АКТУАЛЬНЫЕ ДАННЫЕ · РУЧНОЙ СРЕЗ</div><h1>Протокольный контроль</h1><p>Проверяем поручения группы № 734 и наличие сотрудников из списка УПОСиК № 91 среди наблюдателей.</p></div><div class="tag">Только чтение</div></section>
+<section class="auth"><label for="token">Токен тестового API</label><div class="authline"><input id="token" type="password" autocomplete="off" placeholder="Введите токен"><button id="load" type="button">Загрузить сводку</button></div><p id="message" role="status">Сводка не загружена. Переход к данным выполняется по кнопке.</p></section>
+<section id="body" hidden>
+<div class="heading"><div><h2>Охват проверки</h2><p id="asof">—</p></div><span id="completeness" class="notice">—</span></div>
+<div class="cards">
+<article><span>Задач проверено</span><strong id="task-count">—</strong><small id="pages">—</small></article>
+<article><span>Завершено по коду Б24</span><strong id="completed">—</strong><small>Статус 5 · не означает официальную ИД</small></article>
+<article><span>Возможная просрочка</span><strong id="overdue">—</strong><small>Незавершённые с истёкшим текущим сроком</small></article>
+<article><span>Срок в ближайшие 7 дней</span><strong id="soon">—</strong><small>Без просроченных задач</small></article>
+</div>
+<div class="columns"><section class="panel"><div class="panel-head"><h2>Распределение по статусам</h2><span>Коды Битрикс24</span></div><div id="statuses" class="status-list"></div><p class="hint">Числа отражают выборку на дату снимка. При неполной загрузке они не являются итогами группы.</p></section>
+<section class="panel"><div class="panel-head"><h2>Контроль и наблюдатели</h2><span>Список № 91</span></div><div class="info-row"><span>Сотрудников в списке</span><b id="roster">—</b></div><div class="info-row"><span>Задач с наблюдателем из списка</span><b id="audited">—</b></div><div class="info-row"><span>Без доступного поля наблюдателей</span><b id="unknown">—</b></div><div class="info-row"><span>С нетехнической учётной записью</span><b id="human">—</b></div><p id="roster-note" class="hint">Это сверка участия в наблюдателях, не проверка персональных полномочий.</p></section></div>
+<div class="panel methodology"><h2>Исполнительская дисциплина</h2><strong>Не рассчитана</strong><p>Пока не подтверждены исключения неактуальных поручений и права конкретного контролёра. Недельная динамика также требует нескольких сопоставимых срезов.</p></div>
+<p class="footnote" id="finalnote">Источники: только обезличенный снимок, сохранённый на сервере. Автоматическая синхронизация отключена.</p>
+</section>
+</main>
+</body>
+</html>

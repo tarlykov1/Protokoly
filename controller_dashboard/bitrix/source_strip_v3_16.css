@@ -1,0 +1,10 @@
+/* Controller v3.16. Embedded Bitrix24 page already provides the main heading.
+   dashboard.html contains: <main><div class="source-strip"><span class="source-caption">
+   Актуальность данных</span><span class="tag" id="mode">...</span></div>...
+   Do not add a duplicate <header><h1> inside the iframe. */
+main{padding-top:12px}
+.source-strip{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:11px 14px;margin-bottom:15px;border:1px solid #e0e8f3;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(29,53,87,.035)}
+.source-caption{color:#60718e;font-size:12px;font-weight:650;white-space:nowrap}
+.source-strip .tag{display:block;flex:0 1 auto;max-width:100%;min-width:0;padding:5px 9px;background:#eef4ff;color:#31517b;border:1px solid #dae7f7;border-radius:8px;font-size:12px;line-height:1.45;text-align:right;overflow-wrap:anywhere;white-space:normal}
+.source-strip .tag.loading{background:#fff8e8;color:#8b661d;border-color:#f2dfb7}
+@media(max-width:750px){.source-strip{align-items:flex-start}.source-strip .tag{text-align:left;flex-basis:100%}.source-caption{white-space:normal}}
