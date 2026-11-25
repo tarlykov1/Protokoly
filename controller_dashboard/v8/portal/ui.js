@@ -434,7 +434,12 @@ rowScroll.onscroll=()=>{
   upperScroll.scrollLeft=rowScroll.scrollLeft;
   for(const range of scrollRanges)range.value=rowScroll.scrollLeft;
 };
-for(const range of scrollRanges)range.oninput=()=>{rowScroll.scrollLeft=Number(range.value);};
+for(const range of scrollRanges)range.oninput=()=>{
+  const position=Number(range.value);
+  upperScroll.scrollLeft=position;
+  rowScroll.scrollLeft=position;
+  for(const peer of scrollRanges)peer.value=rowScroll.scrollLeft;
+};
 const registrySize=new ResizeObserver(syncWidth);
 registrySize.observe(rowScroll.querySelector('table'));
 registrySize.observe(rowScroll);

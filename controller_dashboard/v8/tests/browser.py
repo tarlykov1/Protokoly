@@ -172,8 +172,10 @@ with tempfile.TemporaryDirectory() as tmp:
             page.wait_for_function("Math.abs(upper.scrollLeft-lower.scrollLeft)<=1 && lower.scrollTop>0")
             assert scroll.evaluate("e=>Math.abs(e.querySelector('th').getBoundingClientRect().top-e.getBoundingClientRect().top)<2")
             if page.locator("#scrollBottomRange").is_visible():
-                page.locator("#scrollBottomRange").evaluate("e=>{e.value=100;e.dispatchEvent(new Event('input'));}")
-                page.wait_for_function("lower.scrollLeft===100 && upper.scrollLeft===100")
+                position = page.locator("#scrollBottomRange").evaluate(
+                    "e=>{const x=Math.round(Number(e.max)/2);e.value=x;e.dispatchEvent(new Event('input'));return x}"
+                )
+                page.wait_for_function("x=>Math.abs(lower.scrollLeft-x)<=1 && Math.abs(upper.scrollLeft-x)<=1", arg=position)
         batch_size = 1
         failed = True
         page.locator("#refresh").click()
